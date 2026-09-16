@@ -1,0 +1,9 @@
+# Development and build dependencies.
+-r requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# Packaging. 6.15.0 was the first release with Python 3.14 support; this is
+# considerably later and has had the subsequent fixes.
+pyinstaller==6.22.3

@@ -1,0 +1,17 @@
+# Runtime dependencies, pinned.
+#
+# PySide6-Essentials, not PySide6: the meta-package additionally pulls
+# PySide6-Addons, which is roughly 400 MB of QtWebEngine, Qt3D, QtCharts,
+# QtMultimedia and friends that this application does not use. Playwright is
+# the browser here, so QtWebEngine in particular would be dead weight.
+PySide6-Essentials==6.11.2
+shiboken6==6.11.2
+
+# Browser automation. The pinned version determines the bundled Chromium
+# build, which is what makes behaviour reproducible across machines.
+playwright==1.63.0
+
+# Real Action Center notifications via WinRT, rather than a legacy tray
+# balloon. Windows-only; imported lazily so the package stays importable
+# elsewhere.
+windows-toasts==1.3.1

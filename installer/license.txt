@@ -1,0 +1,53 @@
+Amazon Purchase Bot - Terms of Use
+
+WHAT THIS SOFTWARE DOES
+
+This application automates your own Amazon account using an ordinary browser
+window that it controls on your computer. It can read a product page, check
+the price, availability, seller and condition, and - when you tell it to -
+place an order through Amazon's normal checkout.
+
+YOUR RESPONSIBILITIES
+
+You remain responsible for your Amazon account and for complying with
+Amazon's Conditions of Use and any other terms that apply to it. You are
+responsible for every order placed through this software, including orders
+placed by the automatic purchasing option if you switch it on.
+
+Check your rules before enabling automatic purchasing, and keep Test Mode on
+until you have confirmed the software behaves the way you expect.
+
+WHAT THIS SOFTWARE DOES NOT DO
+
+It does not store your Amazon password, your one-time codes, your passkeys or
+your card details. You sign in directly with Amazon in its own browser
+window.
+
+It does not attempt to bypass CAPTCHAs, defeat bot detection, disguise itself
+as something other than browser automation, rotate network addresses or
+falsify device information. When Amazon asks for a human, the software stops
+and asks you.
+
+It sends no data anywhere. There is no telemetry, no analytics and no crash
+reporting. Everything it records stays in a folder on this computer.
+
+NO AFFILIATION WITH AMAZON
+
+This application is an independent tool. It is not affiliated with, produced
+by, endorsed by or connected to Amazon.com, Inc. or any of its subsidiaries.
+"Amazon" is used only to describe what the software interacts with.
+
+NO WARRANTY
+
+This software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose and non-infringement. In no event shall the
+authors or copyright holders be liable for any claim, damages or other
+liability, whether in an action of contract, tort or otherwise, arising from,
+out of or in connection with the software or the use or other dealings in the
+software.
+
+Web pages change. Amazon may alter its pages at any time, which can cause the
+software to stop working correctly. The software is built to stop rather than
+guess when that happens, but no automation of a third-party website can be
+guaranteed to work indefinitely.

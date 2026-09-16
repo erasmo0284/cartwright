@@ -1,0 +1,43 @@
+# --- Never commit anything that could carry a session or credentials -------
+# The dedicated browser profile holds the signed-in Amazon session. It lives
+# under %LOCALAPPDATA% at runtime, but these patterns make sure a stray copy
+# inside the repository can never be committed.
+browser/
+*amazon-profile*
+**/Default/Cookies*
+**/Default/Login Data*
+**/Default/Web Data*
+*.sqlite-wal
+*.sqlite-shm
+
+# Application data, if APB_DATA_DIR is ever pointed inside the repo.
+data/
+logs/
+screenshots/
+backups/
+AmazonPurchaseBot/
+
+# --- Build output ----------------------------------------------------------
+build/
+dist/
+installer/output/
+*.spec.bak
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS ----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
