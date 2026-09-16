@@ -64,21 +64,42 @@ class Database:
         if existing is not None:
             return existing
 
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(
-            self._path,
-            timeout=BUSY_TIMEOUT_MS / 1000,
-            isolation_level=None,  # explicit transaction control
-            check_same_thread=True,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-        # Keep temp material in memory: the data directory may be on a slow
-        # or roaming volume.
-        connection.execute("PRAGMA temp_store = MEMORY")
+        # A file that cannot be opened -- corrupt, read-only, or on a volume
+        # that has gone away -- is reported as an AppError, not a raw
+        # sqlite3 error. The difference is what the user sees: a sentence
+        # they can act on, and the offer to restore a backup, instead of a
+        # traceback from the crash handler.
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            connection = sqlite3.connect(
+                self._path,
+                timeout=BUSY_TIMEOUT_MS / 1000,
+                isolation_level=None,  # explicit transaction control
+                check_same_thread=True,
+            )
+        except (sqlite3.Error, OSError) as exc:
+            raise AppError(
+                ErrorCode.DATABASE_ERROR,
+                context={"reason": "open_failed", "path": str(self._path)},
+                cause=exc,
+            ) from exc
+
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = NORMAL")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+            # Keep temp material in memory: the data directory may be on a slow
+            # or roaming volume.
+            connection.execute("PRAGMA temp_store = MEMORY")
+        except sqlite3.Error as exc:
+            connection.close()
+            raise AppError(
+                ErrorCode.DATABASE_ERROR,
+                context={"reason": "unusable_file", "path": str(self._path)},
+                cause=exc,
+            ) from exc
 
         self._local.connection = connection
         with self._connections_lock:
@@ -127,20 +148,32 @@ class Database:
     # ---- schema ---------------------------------------------------------
 
     def current_version(self) -> int:
-        """Highest applied migration version, or 0 for a fresh database."""
+        """Highest applied migration version, or 0 for a fresh database.
+
+        This is the first statement run against the file, so it is where a
+        corrupt or read-only database announces itself. It is reported as an
+        :class:`AppError` for the same reason as in :meth:`connection`.
+        """
         connection = self.connection()
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version    INTEGER PRIMARY KEY,
-                name       TEXT    NOT NULL,
-                applied_at TEXT    NOT NULL
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version    INTEGER PRIMARY KEY,
+                    name       TEXT    NOT NULL,
+                    applied_at TEXT    NOT NULL
+                )
+                """
             )
-            """
-        )
-        row = connection.execute(
-            "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations"
-        ).fetchone()
+            row = connection.execute(
+                "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise AppError(
+                ErrorCode.DATABASE_ERROR,
+                context={"reason": "unreadable", "path": str(self._path)},
+                cause=exc,
+            ) from exc
         return int(row["version"])
 
     def target_version(self) -> int:
@@ -300,6 +333,62 @@ class Database:
             return self._path.stat().st_size
         except OSError:
             return 0
+
+    def table_row_counts(self) -> dict[str, int]:
+        """One row count per table, for the diagnostics report.
+
+        Table names come from SQLite rather than a hard-coded list, so a
+        table added by a future migration is reported without anyone
+        remembering to update anything. The count lives here, with the rest
+        of the SQL, so no other package has to write a query.
+        """
+        counts: dict[str, int] = {}
+        try:
+            rows = self.query_all(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        except sqlite3.Error:
+            return counts
+        for row in rows:
+            table = str(row["name"])
+            try:
+                counts[table] = int(
+                    self.query_scalar(f'SELECT COUNT(*) FROM "{table}"') or 0
+                )
+            except sqlite3.Error:
+                continue
+        return counts
+
+    def group_counts(self, table: str, column: str) -> dict[str, int]:
+        """``SELECT column, COUNT(*) … GROUP BY column``, for diagnostics.
+
+        ``table`` and ``column`` are identifiers, which cannot be bound as
+        parameters, so they are checked against the live schema before being
+        interpolated. Callers pass literals today; the check is what keeps
+        that from mattering.
+        """
+        if table not in self.table_row_counts():
+            logger.warning("No such table for a grouped count")
+            return {}
+        try:
+            columns = {
+                str(row["name"])
+                for row in self.query_all(f'PRAGMA table_info("{table}")')
+            }
+        except sqlite3.Error:
+            return {}
+        if column not in columns:
+            logger.warning("No such column for a grouped count")
+            return {}
+        try:
+            rows = self.query_all(
+                f'SELECT "{column}" AS bucket, COUNT(*) AS total FROM "{table}" '
+                f'GROUP BY "{column}" ORDER BY bucket'
+            )
+        except sqlite3.Error:
+            return {}
+        return {str(row["bucket"]): int(row["total"]) for row in rows}
 
     def close_current_thread(self) -> None:
         """Close this thread's connection. Called as a worker thread exits."""

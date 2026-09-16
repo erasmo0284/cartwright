@@ -168,12 +168,21 @@ LIVE_STATES: Final[frozenset[PurchaseState]] = frozenset(
 )
 
 #: Diversions available from any state that has not finished.
+#:
+#: ``UNKNOWN`` is included deliberately. It is the only honest destination for
+#: "an order may exist and we cannot read the result", and crash recovery has
+#: to be able to reach it from whatever state a job was left in -- including
+#: an early one, if a submission was recorded before the state row was
+#: updated. Forbidding it there would force recovery to choose ``FAILED``,
+#: which tells the user nothing was ordered and frees the product's
+#: single-in-flight slot: the exact route to a duplicate order.
 _DIVERSIONS: Final[frozenset[PurchaseState]] = frozenset(
     {
         PurchaseState.BLOCKED,
         PurchaseState.FAILED,
         PurchaseState.NEEDS_USER,
         PurchaseState.CANCELLED,
+        PurchaseState.UNKNOWN,
     }
 )
 

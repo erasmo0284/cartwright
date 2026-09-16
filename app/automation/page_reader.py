@@ -242,15 +242,21 @@ class PageReader:
         return Reading(None, resolution)
 
     def page_text(self, *, limit: int = 400_000) -> str:
-        """The page's visible text, for wording-based classification."""
+        """The page's *visible* text, for wording-based classification.
+
+        Returns an empty string when the text could not be read. It
+        deliberately does not fall back to ``page.content()``: raw HTML
+        contains hidden templates and markup the user never sees, and callers
+        search this for meaningful phrases. Substituting the source made a
+        slow cart page look like an empty one, because an off-screen
+        "your cart is empty" template matched.
+        """
         try:
             body = self._page.locator("body").first
             raw = body.inner_text(timeout=5_000)
         except Exception:  # noqa: BLE001
-            try:
-                raw = self._page.content()
-            except Exception:  # noqa: BLE001
-                return ""
+            logger.warning("Could not read the page text")
+            return ""
         return (raw or "")[:limit]
 
     def title(self) -> str:

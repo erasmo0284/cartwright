@@ -185,8 +185,18 @@ class TestParseSplitPrice:
         assert money is not None
         assert money.cents == 129900
 
-    def test_missing_fraction_is_treated_as_zero(self) -> None:
-        money = parse_split_price("89.", None)
+    def test_a_missing_fraction_after_a_separator_is_refused(self) -> None:
+        """``"89."`` means a fraction existed and was not read.
+
+        Assuming ``.00`` would under-read by up to 99 cents, in the spending
+        direction, which is the one direction this module must never fail in.
+        """
+        assert parse_split_price("89.", None) is None
+        assert parse_split_price("1,299.", "") is None
+
+    def test_a_whole_number_with_no_separator_is_accepted(self) -> None:
+        """``"89"`` with no separator is genuinely a whole amount."""
+        money = parse_split_price("89", None)
         assert money is not None
         assert money.cents == 8900
 

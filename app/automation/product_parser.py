@@ -330,27 +330,20 @@ class ProductParser:
         """
         sns_locator, _ = reader.find(selectors.SUBSCRIBE_AND_SAVE_ROW)
         if sns_locator is None:
+            # The row's element ids are Amazon's, and they change. Wording
+            # inside the buy box is the backstop: if a recurring delivery is
+            # being offered there, "not a subscription" may only be concluded
+            # from a one-time option that is positively selected.
+            if not self._buy_box_offers_a_subscription(reader):
+                return False
+            logger.warning(
+                "Subscription wording in the buy box with no Subscribe & Save "
+                "row matched; treating the selectors as stale"
+            )
+            return not self._one_time_is_selected(reader)
+
+        if self._one_time_is_selected(reader):
             return False
-
-        one_time, _ = reader.find(selectors.ONE_TIME_PURCHASE_ROW)
-        if one_time is None:
-            logger.info("Subscribe & Save offered with no one-time row found")
-            return True
-
-        try:
-            classes = one_time.get_attribute("class", timeout=2_000) or ""
-        except Exception:  # noqa: BLE001
-            classes = ""
-        if "a-accordion-active" in classes:
-            return False
-
-        radio, _ = reader.find(selectors.ONE_TIME_PURCHASE_RADIO)
-        if radio is not None:
-            try:
-                if radio.is_checked(timeout=2_000):
-                    return False
-            except Exception:  # noqa: BLE001
-                pass
 
         try:
             sns_classes = sns_locator.get_attribute("class", timeout=2_000) or ""
@@ -361,6 +354,44 @@ class ProductParser:
 
         logger.info("Could not confirm the one-time purchase option was selected")
         return True
+
+    @staticmethod
+    def _buy_box_offers_a_subscription(reader: PageReader) -> bool:
+        """Whether the buy box mentions a recurring delivery.
+
+        Scoped to the buy box on purpose: the same phrases appear in
+        recommendation strips on pages that have no subscription option at
+        all, and treating those as subscriptions would block ordinary
+        purchases. When the buy box cannot be found, the whole page is used,
+        because being unable to look is not evidence of absence.
+        """
+        reading = reader.text(selectors.BUY_BOX_CONTAINER)
+        text = normalise_label(reading.value) if reading.value else ""
+        if not text:
+            text = normalise_label(reader.page_text(limit=40_000))
+        return any(phrase in text for phrase in selectors.SUBSCRIPTION_TEXT)
+
+    def _one_time_is_selected(self, reader: PageReader) -> bool:
+        """Whether the one-time purchase option is demonstrably the active one."""
+        one_time, _ = reader.find(selectors.ONE_TIME_PURCHASE_ROW)
+        if one_time is None:
+            logger.info("No one-time purchase row was found")
+            return False
+
+        try:
+            classes = one_time.get_attribute("class", timeout=2_000) or ""
+        except Exception:  # noqa: BLE001
+            classes = ""
+        if "a-accordion-active" in classes:
+            return True
+
+        radio, _ = reader.find(selectors.ONE_TIME_PURCHASE_RADIO)
+        if radio is not None:
+            try:
+                return bool(radio.is_checked(timeout=2_000))
+            except Exception:  # noqa: BLE001
+                return False
+        return False
 
     # ---- variation -------------------------------------------------------
 
@@ -441,7 +472,18 @@ class ProductParser:
         if not normalised or normalised in {"quantity", "select"}:
             return
         if normalised not in selectors.KNOWN_VARIATION_LABELS:
-            logger.debug("Ignoring an unrecognised variation label", extra={"label": cleaned_label})
+            # Dropped rather than compared: Amazon puts non-dimension labels
+            # in this markup, and treating those as dimensions would block
+            # ordinary purchases. The consequence is that a genuine dimension
+            # with an unfamiliar name carries no expectation of its own --
+            # which the per-variation ASIN check still catches, because a
+            # different variation is a different ASIN. Logged at INFO, not
+            # DEBUG, so a stale list is visible in an ordinary log rather
+            # than only under diagnostics.
+            logger.info(
+                "Ignoring an unrecognised variation label",
+                extra={"label": cleaned_label},
+            )
             return
         cleaned_value = clean(value)
         if not cleaned_value or len(cleaned_value) > 120:

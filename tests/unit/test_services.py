@@ -55,6 +55,7 @@ from app.purchasing.models import (
 )
 from app.purchasing.purchase_service import PurchaseService
 from app.purchasing.states import PurchaseState
+from app.purchasing.validation import GuardPhase
 
 ASIN = "B01N5OSTVQ"
 
@@ -167,6 +168,11 @@ class FakeAdapter:
     inspect_error: AppError | None = None
     submitted: list[SubmitAuthorization] = None  # type: ignore[assignment]
     restored: int = 0
+    #: What the cart holds after the item was added, on the cart route. The
+    #: real adapter re-reads the cart there and hands it to ``on_cart_read``.
+    prepared_cart: CartState | None = None
+    #: How many times the pre-checkout callback was invoked.
+    cart_guard_calls: int = 0
 
     def __post_init__(self) -> None:
         if self.submitted is None:
@@ -181,9 +187,28 @@ class FakeAdapter:
         return self.cart
 
     def prepare_purchase(self, session, *, rules, plan, marketplace="www.amazon.com",
-                         journal=None, on_journal_change=None):
+                         journal=None, on_journal_change=None, on_cart_read=None):
         from app.automation.amazon_adapter import PreparedPurchase
         from app.automation.cart_manager import IsolationJournal
+
+        if plan.strategy is not CartStrategy.BUY_NOW and callable(on_cart_read):
+            # Mirrors the real adapter: the cart is re-read after the item was
+            # added, and the caller gets to refuse before the checkout opens.
+            cart = self.prepared_cart
+            if cart is None:
+                cart = CartState(
+                    lines=(
+                        CartLine(
+                            asin=self.snapshot.asin,
+                            title=self.snapshot.title,
+                            quantity=rules.quantity,
+                            unit_price=self.snapshot.price,
+                        ),
+                    ),
+                    subtotal=self.snapshot.price,
+                )
+            self.cart_guard_calls += 1
+            on_cart_read(self.snapshot, cart)
 
         return PreparedPurchase(
             product=self.snapshot,
@@ -470,6 +495,29 @@ class TestAssistedPurchase:
         assert harness.adapter.submitted == []
         assert harness.service.pending_review(job_id) is None
 
+    def test_switching_test_mode_on_before_confirming_stops_the_order(
+        self, harness, rules
+    ) -> None:
+        """Test Mode is read live, at the moment of submission.
+
+        A user who switches it on while the confirmation is on screen has
+        said "do not order". Taking the value frozen when the purchase
+        started would order anyway.
+        """
+        job_id = self._prepare(harness, rules)
+        harness.settings.update(test_mode=True)
+
+        harness.service.confirm(job_id)
+
+        assert harness.adapter.submitted == [], "nothing may be submitted"
+        assert not harness.purchases.has_submitted(job_id)
+        job = harness.purchases.get(job_id)
+        assert job is not None and job.state is PurchaseState.CANCELLED
+        assert job.outcome_code == "test_mode"
+        assert harness.events["cancelled"] == [job_id]
+        assert harness.events["failed"] == [], "this is not an error"
+        assert harness.adapter.restored >= 1, "the cart must be put back"
+
     def test_the_progress_messages_are_human(self, harness, rules) -> None:
         """The step text a user watches must read as English."""
         self._prepare(harness, rules)
@@ -741,6 +789,42 @@ class TestRecovery:
             for event in harness.activity.list_events()
         )
 
+    def test_recovery_never_says_nothing_was_ordered_after_a_submission(
+        self, harness, rules
+    ) -> None:
+        """A recorded submission means UNKNOWN, whatever state the row is in.
+
+        ``FAILED`` would claim nothing was ordered, free the product's
+        single-in-flight slot and never prompt the user, which is exactly how
+        a crash could become a second order.
+        """
+        harness.settings.update(test_mode=False)
+        harness.worker.defer = True
+        job_id = harness.service.start(
+            product_id=harness.product_id, rules=rules, mode=PurchaseMode.ASSISTED
+        )
+        for state in (
+            PurchaseState.PRODUCT_CHECK,
+            PurchaseState.RULE_VALIDATION,
+            PurchaseState.CART_PREPARATION,
+            PurchaseState.CHECKOUT,
+            PurchaseState.FINAL_VALIDATION,
+            PurchaseState.AWAITING_CONFIRMATION,
+        ):
+            harness.purchases.transition(job_id, state)
+        attempt = harness.purchases.begin_attempt(job_id)
+        harness.purchases.mark_submitted(attempt)
+
+        assert harness.service.recover_after_restart() == [job_id]
+        job = harness.purchases.get(job_id)
+        assert job is not None and job.state is PurchaseState.UNKNOWN
+        assert "Nothing was ordered" not in (job.outcome_detail or "")
+        # The product is still held, so nothing can start a second order.
+        with pytest.raises(AppError):
+            harness.service.start(
+                product_id=harness.product_id, rules=rules, mode=PurchaseMode.ASSISTED
+            )
+
     def test_recovery_fails_jobs_that_never_submitted(self, harness, rules) -> None:
         harness.settings.update(test_mode=False)
         harness.worker.defer = True
@@ -753,6 +837,119 @@ class TestRecovery:
         job = harness.purchases.get(job_id)
         assert job is not None and job.state is PurchaseState.FAILED
         assert "Nothing was ordered" in (job.outcome_detail or "")
+
+
+# ---------------------------------------------------------------------------
+# The pre-checkout guard phase
+# ---------------------------------------------------------------------------
+
+
+class TestPreCheckoutGuard:
+    """The cart route must be validated before the checkout is entered.
+
+    This is the last point at which stopping costs nothing: the item is in a
+    cart, no checkout has been opened, and the cart can be put back exactly
+    as it was found.
+    """
+
+    @pytest.fixture
+    def cart_route(self, harness, rules):
+        """Force the add-to-cart route by removing Buy Now."""
+        harness.settings.update(test_mode=False)
+        harness.adapter.snapshot = replace(
+            harness.adapter.snapshot,
+            buy_now_available=False,
+            add_to_cart_available=True,
+        )
+        return harness
+
+    def test_the_phase_runs_and_is_recorded(self, cart_route, rules) -> None:
+        harness = cart_route
+        job_id = harness.service.start(
+            product_id=harness.product_id, rules=rules, mode=PurchaseMode.ASSISTED
+        )
+        assert harness.adapter.cart_guard_calls == 1
+        report = harness.purchases.latest_guard_report(job_id, GuardPhase.PRE_CHECKOUT)
+        assert report is not None, "the pre-checkout report must be persisted"
+        assert report["passed"] is True
+        assert report["checks"], "the report must list the checks it ran"
+        assert harness.events["ready"], "a passing cart proceeds as normal"
+
+    def test_an_unrelated_line_blocks_before_the_checkout(
+        self, cart_route, rules
+    ) -> None:
+        harness = cart_route
+        harness.adapter.prepared_cart = CartState(
+            lines=(
+                CartLine(
+                    asin=ASIN,
+                    title="Clamp meter",
+                    quantity=1,
+                    unit_price=usd("109.97"),
+                ),
+                CartLine(
+                    asin="B00OTHER11",
+                    title="Something else entirely",
+                    quantity=1,
+                    unit_price=usd("42.00"),
+                ),
+            ),
+            subtotal=usd("151.97"),
+        )
+        job_id = harness.service.start(
+            product_id=harness.product_id, rules=rules, mode=PurchaseMode.ASSISTED
+        )
+
+        assert harness.adapter.submitted == []
+        assert harness.events["ready"] == [], "a blocked cart never asks to buy"
+        job = harness.purchases.get(job_id)
+        assert job is not None and job.state is PurchaseState.BLOCKED
+        assert job.outcome_code == ErrorCode.UNEXPECTED_CART_ITEMS.value
+        assert harness.adapter.restored >= 1, "the cart must be put back"
+        outcome = harness.events["blocked"][0]
+        assert outcome.report is not None
+        assert outcome.report.phase is GuardPhase.PRE_CHECKOUT
+
+    def test_a_quantity_the_page_changed_blocks(self, cart_route, rules) -> None:
+        harness = cart_route
+        harness.adapter.prepared_cart = CartState(
+            lines=(
+                CartLine(
+                    asin=ASIN,
+                    title="Clamp meter",
+                    quantity=3,
+                    unit_price=usd("109.97"),
+                ),
+            ),
+            subtotal=usd("329.91"),
+        )
+        job_id = harness.service.start(
+            product_id=harness.product_id, rules=rules, mode=PurchaseMode.ASSISTED
+        )
+        assert harness.adapter.submitted == []
+        job = harness.purchases.get(job_id)
+        assert job is not None and job.state is PurchaseState.BLOCKED
+
+    def test_an_unreadable_quantity_blocks(self, cart_route, rules) -> None:
+        """``None`` means "not read", which may never be treated as correct."""
+        harness = cart_route
+        harness.adapter.prepared_cart = CartState(
+            lines=(
+                CartLine(
+                    asin=ASIN,
+                    title="Clamp meter",
+                    quantity=None,
+                    unit_price=usd("109.97"),
+                ),
+            ),
+            subtotal=usd("109.97"),
+        )
+        job_id = harness.service.start(
+            product_id=harness.product_id, rules=rules, mode=PurchaseMode.ASSISTED
+        )
+        assert harness.adapter.submitted == []
+        job = harness.purchases.get(job_id)
+        assert job is not None and job.state is PurchaseState.BLOCKED
 
 
 # ---------------------------------------------------------------------------

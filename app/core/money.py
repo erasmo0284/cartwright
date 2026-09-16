@@ -371,5 +371,11 @@ def parse_split_price(
         return Money(int(whole_digits), resolved)
     if len(fraction_digits) > places:
         return None
+    if not fraction_digits and re.search(r"[.,]\s*$", whole.strip()):
+        # The whole part ends in a decimal separator, so a fraction existed
+        # and was not read. Assuming ".00" would under-read by up to 99c --
+        # in the spending direction -- which is exactly what this module
+        # exists to prevent.
+        return None
     fraction_digits = (fraction_digits or "0").ljust(places, "0")
     return Money(int(whole_digits) * (10**places) + int(fraction_digits), resolved)

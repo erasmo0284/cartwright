@@ -7,6 +7,8 @@ two orders out of one intent.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.core.errors import AppError, ErrorCode
@@ -1026,3 +1028,67 @@ class TestActivity:
         files = activity.clear_diagnostics()
         assert sorted(files) == ["a.png", "b.png"]
         assert activity.list_diagnostics() == []
+
+
+class TestRuleBrandIsFrozen:
+    """The manufacturer seller policy must not follow a changed byline.
+
+    ``PurchaseRules.brand`` is what ``amazon_or_manufacturer`` compares a
+    seller name to. It used to be re-derived from ``products.brand`` on every
+    check, and that row is refreshed from the product page's byline -- so a
+    listing whose byline and seller name both change (what a listing takeover
+    looks like) would satisfy "Amazon or the manufacturer" for whatever the
+    byline then claimed. It is now stored on the rule row.
+    """
+
+    def test_the_brand_survives_a_round_trip(
+        self, rules_repo: RulesRepository, rules: PurchaseRules
+    ) -> None:
+        stored = rules_repo.create(replace(rules, brand="Klein Tools"))
+        assert stored.brand == "Klein Tools"
+        assert stored.rules_id is not None
+        assert rules_repo.get(stored.rules_id).brand == "Klein Tools"
+
+    def test_a_later_product_brand_change_does_not_reach_the_rule(
+        self,
+        rules_repo: RulesRepository,
+        products: ProductRepository,
+        rules: PurchaseRules,
+        snapshot: ProductSnapshot,
+    ) -> None:
+        record = products.upsert_from_snapshot(
+            replace(snapshot, brand="Klein Tools")
+        )
+        assert record.brand == "Klein Tools"
+        stored = rules_repo.create(replace(rules, brand=record.brand))
+
+        # The page now claims a different manufacturer.
+        refreshed = products.upsert_from_snapshot(
+            replace(snapshot, brand="Bargain Bin Electronics")
+        )
+        assert refreshed.brand == "Bargain Bin Electronics"
+
+        assert stored.rules_id is not None
+        reloaded = rules_repo.get(stored.rules_id)
+        assert reloaded.brand == "Klein Tools"
+        assert not reloaded.seller_allowed("Bargain Bin Electronics")
+
+    def test_an_updated_rule_keeps_its_brand(
+        self, rules_repo: RulesRepository, rules: PurchaseRules
+    ) -> None:
+        stored = rules_repo.create(replace(rules, brand="Klein Tools"))
+        assert stored.rules_id is not None
+        updated = rules_repo.update(
+            stored.rules_id, replace(stored, quantity=2)
+        )
+        assert updated.brand == "Klein Tools"
+        assert updated.quantity == 2
+
+    def test_a_duplicated_rule_keeps_its_brand(
+        self, rules_repo: RulesRepository, rules: PurchaseRules
+    ) -> None:
+        stored = rules_repo.create(replace(rules, brand="Klein Tools"))
+        assert stored.rules_id is not None
+        copy = rules_repo.duplicate(stored.rules_id)
+        assert copy.brand == "Klein Tools"
+        assert copy.rules_id != stored.rules_id

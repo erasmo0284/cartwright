@@ -324,6 +324,14 @@ class MainWindow(QMainWindow):
 
     def prepare(self, *, start_in_tray: bool) -> None:
         """Show the window, or start hidden in the tray."""
+        # Connected first, and whichever way this starts: a second launch
+        # asks the running instance to show itself, and an app that started
+        # in the tray is exactly the case where the user needs that most.
+        if self._guard is not None:
+            activate = getattr(self._guard, "activate_requested", None)
+            if activate is not None:
+                activate.connect(lambda _payload: self._on_tray_open())
+
         if start_in_tray and self._tray is not None:
             logger.info("Starting hidden in the system tray")
             self._tray.show_message(
@@ -335,10 +343,6 @@ class MainWindow(QMainWindow):
             return
         self.show()
         show_and_raise(self)
-        if self._guard is not None:
-            activate = getattr(self._guard, "activate_requested", None)
-            if activate is not None:
-                activate.connect(lambda _payload: self._on_tray_open())
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt naming
         """Hide to the tray unless the user asked to exit, or told us to."""
@@ -354,6 +358,12 @@ class MainWindow(QMainWindow):
         )
         if not stay_running:
             self._on_exit()
+            if not self._really_quitting:
+                # The user declined to stop a purchase that is in progress.
+                # Accepting the close here would hide the window while the
+                # process kept running, with no tray icon to bring it back.
+                event.ignore()
+                return
             event.accept()
             return
 
@@ -613,12 +623,19 @@ class MainWindow(QMainWindow):
         )
         if dialog.exec() != CartPermissionDialog.DialogCode.Accepted:
             return
-        rules = self._context.repositories.rules.get(
-            self._context.repositories.purchases.get(
-                outcome.purchase_job_id
-            ).rules_id
+        # The job row could have been pruned between the block and this
+        # answer, so the lookup is guarded rather than dereferenced.
+        job = self._context.repositories.purchases.get(outcome.purchase_job_id)
+        rules = (
+            self._context.repositories.rules.get(job.rules_id)
+            if job is not None
+            else None
         )
         if rules is None:
+            logger.warning(
+                "The rules for a blocked purchase were no longer available",
+                extra={"purchase_job_id": outcome.purchase_job_id},
+            )
             return
         try:
             self._context.purchase_service.start(

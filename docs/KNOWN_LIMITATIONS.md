@@ -54,6 +54,25 @@ file when Amazon changes.
   surprising. It is off by default.
 - **Digital goods, subscriptions, pre-orders and add-on items** are untested
   and likely to be refused by one check or another.
+- **A variation dimension with an unfamiliar name carries no expectation of
+  its own.** Amazon puts non-dimension labels in the same markup, so only
+  recognised dimension names (Colour, Size, Style, …) become part of the
+  variation the guard compares; anything else is dropped and logged at INFO.
+  The bound on this is the ASIN check: a different variation is a different
+  ASIN, and that comparison is exact. A new dimension name therefore weakens
+  the *description* of what is being bought, not the identity of it.
+- **The `Amazon or the manufacturer` seller rule trusts the brand name the
+  product page showed when you created the rule.** It is stored at that
+  moment and never refreshed, so a later change to the page cannot widen what
+  the rule allows -- but if the page was already showing a misleading brand,
+  the rule was created around that. `Amazon only` and the approved-seller list
+  do not have this property, and `Amazon only` is the default.
+- **Subscribe & Save is detected by element ids first, wording second.** If
+  Amazon renames the accordion rows, the app falls back to looking for
+  subscription wording inside the buy box, and reports "subscription" unless
+  a one-time option can be shown to be selected. That is the safe direction,
+  but on a renamed buy box it can refuse a purchase that was in fact a
+  one-time order.
 
 ## Functional gaps
 
@@ -105,27 +124,30 @@ against the real thing:
   bar.
 - **Sleep/wake.** The clock-jump detector is unit-tested with simulated
   clocks; the machine has not actually been suspended.
-- **The installer.** See below.
+- **The installer's interactive wizard.** The unattended path is tested; see below.
 
 ## Installer
 
-The Inno Setup script (`installer/setup.iss`) is complete and reviewed, but
-**Inno Setup is not installed on the build machine, so no `Setup.exe` has been
-produced or tested.** Install it and re-run:
+`AmazonPurchaseBot-1.0.0-Setup.exe` was built with Inno Setup 6.7.3 and
+tested unattended: install (exit 0, 5.1 s, no administrator prompt, 217 MB in
+`%LOCALAPPDATA%\Programs`), launch of the installed copy, and uninstall
+(exit 0, program and shortcuts removed, **user data kept**, the
+`AppUserModelId` and `Run` registry keys removed). The Start Menu shortcut was
+confirmed to carry the AppUserModelID via `Get-StartApps`.
 
-```bash
-winget install -e --id JRSoftware.InnoSetup
-.venv\Scripts\python.exe scripts\build.py --installer
-```
+Still unverified in the installer:
 
-What that has therefore not verified: the per-user install path, the Start
-Menu shortcut carrying the AppUserModelID, the desktop and startup task
-checkboxes, the upgrade-over-running-copy behaviour (`AppMutex`), the
-low-disk-space warning, and the uninstall prompt that offers to keep the data
-folder.
+- the **interactive** wizard -- every run so far was `/VERYSILENT`, so the
+  page layout, the desktop-shortcut and start-with-Windows checkboxes, and
+  the "keep your data?" uninstall prompt have been read in the script but not
+  clicked;
+- **upgrade over a running copy** (`AppMutex` should ask the user to close the
+  app first);
+- the **low-disk-space warning**;
+- installing as a **different Windows user**, and on a machine where
+  `%LOCALAPPDATA%` is redirected to a network path.
 
-The **application** build is fully verified: see
-[TEST_REPORT.md](TEST_REPORT.md).
+See [TEST_REPORT.md](TEST_REPORT.md) for what was verified and how.
 
 ## Operational
 

@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Callable
 
-from app.database.migrations import m0001_initial
+from app.database.migrations import m0001_initial, m0002_rules_brand
 
 
 @dataclass(frozen=True)
@@ -35,5 +35,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         version=1,
         name="initial_schema",
         sql=m0001_initial.SQL,
+    ),
+    Migration(
+        version=2,
+        name="rules_brand",
+        sql=m0002_rules_brand.SQL,
     ),
 )

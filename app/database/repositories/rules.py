@@ -44,8 +44,8 @@ class RulesRepository:
                     expected_ships_from, expected_address_label,
                     expected_payment_label, require_address_match,
                     require_payment_match, allow_addons, allow_subscription,
-                    require_prime, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    require_prime, brand, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._to_params(rules) + (stamp, stamp),
             )
@@ -69,7 +69,7 @@ class RulesRepository:
                     expected_address_label = ?, expected_payment_label = ?,
                     require_address_match = ?, require_payment_match = ?,
                     allow_addons = ?, allow_subscription = ?, require_prime = ?,
-                    updated_at = ?
+                    brand = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 self._to_params(rules) + (now_iso(), rules_id),
@@ -109,4 +109,8 @@ class RulesRepository:
             int(rules.allow_addons),
             int(rules.allow_subscription),
             int(rules.require_prime),
+            # Frozen here on purpose: the manufacturer seller policy compares
+            # a seller name to this, and re-deriving it from the product page
+            # on every check would let a changed byline widen the rule.
+            rules.brand,
         )

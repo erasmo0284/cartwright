@@ -292,50 +292,15 @@ def _database_section(database: Database) -> dict[str, Any]:
         "schema_target": database.target_version(),
         "integrity_ok": intact,
         "integrity_result": result,
-        "row_counts": _row_counts(database),
+        "row_counts": database.table_row_counts(),
     }
-
-
-def _row_counts(database: Database) -> dict[str, int]:
-    """One count per table. Table names come from SQLite, not a hard-coded
-    list, so a table added by a future migration is reported without anyone
-    remembering to update this module.
-    """
-    counts: dict[str, int] = {}
-    try:
-        rows = database.query_all(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
-        )
-    except Exception:  # noqa: BLE001
-        return counts
-    for row in rows:
-        table = str(row["name"])
-        try:
-            counts[table] = int(
-                database.query_scalar(f'SELECT COUNT(*) FROM "{table}"') or 0
-            )
-        except Exception:  # noqa: BLE001
-            continue
-    return counts
 
 
 def _jobs_section(database: Database) -> dict[str, dict[str, int]]:
     return {
-        "watch_jobs_by_state": _group_counts(database, "watch_jobs", "status"),
-        "purchase_jobs_by_state": _group_counts(database, "purchase_jobs", "state"),
+        "watch_jobs_by_state": database.group_counts("watch_jobs", "status"),
+        "purchase_jobs_by_state": database.group_counts("purchase_jobs", "state"),
     }
-
-
-def _group_counts(database: Database, table: str, column: str) -> dict[str, int]:
-    try:
-        rows = database.query_all(
-            f'SELECT "{column}" AS bucket, COUNT(*) AS total FROM "{table}" '
-            f'GROUP BY "{column}" ORDER BY bucket'
-        )
-    except Exception:  # noqa: BLE001
-        return {}
-    return {str(row["bucket"]): int(row["total"]) for row in rows}
 
 
 def _settings_section(settings: SettingsService) -> dict[str, Any]:

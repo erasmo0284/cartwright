@@ -28,7 +28,6 @@ from typing import Any, Final, Mapping
 
 from PySide6.QtCore import QObject, Signal
 
-from app.core.timeutil import now_iso
 from app.database.database import Database
 from app.purchasing.models import ConditionPolicy, PurchaseMode, SellerPolicy
 
@@ -231,6 +230,13 @@ class SettingsService(QObject):
     def __init__(self, database: Database, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._database = database
+        # Imported here rather than at module scope: the repositories package
+        # imports the watch repository, which needs this module's interval
+        # constants, so a top-level import would be circular. All SQL still
+        # lives behind a repository, including this table's.
+        from app.database.repositories.settings import SettingsRepository
+
+        self._store = SettingsRepository(database)
         self._settings = AppSettings()
         self._loaded = False
 
@@ -245,14 +251,7 @@ class SettingsService(QObject):
 
     def reload(self) -> AppSettings:
         """Re-read every setting from the database."""
-        stored: dict[str, Any] = {}
-        for row in self._database.query_all("SELECT key, value FROM settings"):
-            try:
-                stored[row["key"]] = json.loads(row["value"])
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Ignoring unreadable setting", extra={"key": row["key"]}
-                )
+        stored = self._store.load_all()
 
         defaults = AppSettings()
         known = {item.name for item in fields(AppSettings)}
@@ -323,15 +322,7 @@ class SettingsService(QObject):
 
         current = self.current
         updated = replace(current, **changes)
-        stamp = now_iso()
-        with self._database.transaction() as conn:
-            for name, value in changes.items():
-                conn.execute(
-                    "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
-                    "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
-                    "updated_at = excluded.updated_at",
-                    (name, json.dumps(_to_json(value)), stamp),
-                )
+        self._store.save({name: _to_json(value) for name, value in changes.items()})
         self._settings = updated
         logger.info("Settings updated", extra={"keys": sorted(changes)})
         self.changed.emit(updated)
@@ -358,12 +349,7 @@ class SettingsService(QObject):
             "amazon_account_label",
             "amazon_last_verified_at",
         }
-        with self._database.transaction() as conn:
-            placeholders = ", ".join("?" for _ in preserved)
-            conn.execute(
-                f"DELETE FROM settings WHERE key NOT IN ({placeholders})",
-                tuple(preserved),
-            )
+        self._store.delete_all_except(frozenset(preserved))
         settings = self.reload()
         logger.info("Settings reset to defaults")
         self.changed.emit(settings)

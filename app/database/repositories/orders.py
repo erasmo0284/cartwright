@@ -103,7 +103,7 @@ class OrderRepository:
                 ),
             )
         matching = checkout.lines_for(rules.expected_asin)
-        quantity = sum(line.quantity for line in matching) or rules.quantity
+        quantity = sum(line.units for line in matching) or rules.quantity
         item_price = next(
             (line.unit_price for line in matching if line.unit_price), None
         )

@@ -32,7 +32,7 @@ from typing import Any, Callable, Sequence
 from app.automation import selectors
 from app.automation.page_reader import PageReader, clean
 from app.core.errors import AppError, ErrorCode
-from app.core.money import Money, parse_money, parse_money_ceiling
+from app.core.money import Money, extract_prices, parse_money_ceiling
 from app.purchasing.models import (
     CartLine,
     CheckoutSnapshot,
@@ -179,12 +179,27 @@ class CheckoutManager:
             key = self._classify_summary_row(text)
             if key is None:
                 continue
-            label, _, value_part = text.rpartition(":")
-            candidate = value_part if label else text
-            money = parse_money(candidate) or parse_money_ceiling(candidate)
-            if money is None:
+            # The whole row is parsed, never a fragment of it. Classifying on
+            # the text before the first colon while taking the value from
+            # after the *last* colon meant a row carrying a second colon --
+            # fine print inside the grand total, say -- yielded the wrong
+            # fragment, and could read the order total LOWER than the truth.
+            # That defeats the point of the ceiling parser, which only
+            # guarantees safety when it is shown the whole string.
+            prices = extract_prices(text)
+            if not prices:
                 continue
-            found.setdefault(key, []).append(money)
+            if len({price.cents for price in prices}) > 1:
+                logger.warning(
+                    "A summary row contained several prices; taking the largest",
+                    extra={
+                        "row": key,
+                        "values": sorted(price.cents for price in prices),
+                    },
+                )
+            found.setdefault(key, []).append(
+                max(prices, key=lambda price: price.cents)
+            )
 
         result: dict[str, Money] = {}
         for key, values in found.items():
@@ -246,8 +261,7 @@ class CheckoutManager:
             if not text and not asin:
                 continue
 
-            quantity_match = _QUANTITY_PATTERN.search(text)
-            quantity = int(quantity_match.group(1)) if quantity_match else 1
+            quantity = self._line_quantity(row, text)
             unit_price = self._line_price(row)
             title = self._line_title(row) or (text[:120] or None)
 
@@ -257,14 +271,75 @@ class CheckoutManager:
                     title=title,
                     quantity=quantity,
                     unit_price=unit_price,
-                    line_price=unit_price * quantity if unit_price else None,
+                    line_price=(
+                        unit_price * quantity
+                        if unit_price is not None and quantity is not None
+                        else None
+                    ),
+                    seller=self._line_seller(row),
                 )
             )
         return lines
 
     @staticmethod
+    def _line_quantity(row: Any, text: str) -> int | None:
+        """The line's quantity, or ``None`` when it could not be read.
+
+        Amazon words this several ways and sometimes renders a ``select``
+        instead of text, so a form control is tried before the wording.
+        Returning ``None`` rather than ``1`` matters: the guard validates
+        whatever it is given, so a fabricated ``1`` would be reported as a
+        PASS against a rule asking for one -- while the order actually
+        contained three.
+        """
+        for selector in selectors.CHECKOUT_LINE_QUANTITY_CONTROLS:
+            try:
+                control = row.locator(selector).first
+                if control.count() == 0:
+                    continue
+                raw = (control.input_value(timeout=1_500) or "").strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if raw.isdigit() and int(raw) > 0:
+                return int(raw)
+
+        for pattern in selectors.CHECKOUT_QUANTITY_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                value = int(match.group(1))
+                if value > 0:
+                    return value
+        logger.warning("A checkout line had no readable quantity")
+        return None
+
+    @staticmethod
+    def _line_seller(row: Any) -> str | None:
+        """The "Sold by" text on one checkout line, if Amazon shows it.
+
+        Read so the guard can check the seller of the offer actually being
+        bought, rather than trusting the product page read minutes earlier --
+        the buybox can flip in between.
+        """
+        try:
+            target = row.locator(selectors.CART_ITEM_SELLER).first
+            if target.count() == 0:
+                return None
+            text = clean(target.text_content(timeout=1_500))
+        except Exception:  # noqa: BLE001
+            return None
+        if not text:
+            return None
+        cleaned = text.strip()
+        for prefix in ("sold by:", "sold by", "ships from and sold by"):
+            if cleaned.lower().startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                break
+        result = clean(cleaned)
+        return result[:120] if result else None
+
+    @staticmethod
     def _line_price(row: Any) -> Money | None:
-        for selector in (".a-price .a-offscreen", ".a-price", ".a-color-price"):
+        for selector in selectors.CHECKOUT_LINE_PRICE:
             try:
                 target = row.locator(selector).first
                 if target.count() == 0:
@@ -280,7 +355,7 @@ class CheckoutManager:
 
     @staticmethod
     def _line_title(row: Any) -> str | None:
-        for selector in (".sc-product-title", ".a-size-base", "h4", ".a-link-normal"):
+        for selector in selectors.CHECKOUT_LINE_TITLE:
             try:
                 target = row.locator(selector).first
                 if target.count() == 0:

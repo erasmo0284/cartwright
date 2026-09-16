@@ -214,3 +214,29 @@ def confirm(
 
     box.exec()
     return box.clickedButton() is proceed
+
+
+def confirm_destructive(
+    parent: QWidget | None,
+    *,
+    title: str,
+    message: str,
+    confirm_label: str,
+    cancel_label: str = "Cancel",
+) -> bool:
+    """Ask before something the user cannot undo. ``True`` means go ahead.
+
+    A thin wrapper over :func:`confirm` so that the wording of an
+    irreversible choice lives in one place, and so a test can stand in for
+    the dialog. The Activity and Settings screens each had their own copy of
+    this, which is how two dialogs for the same kind of decision end up
+    behaving differently.
+    """
+    return confirm(
+        parent,
+        title=title,
+        message=message,
+        confirm_text=confirm_label,
+        cancel_text=cancel_label,
+        destructive=True,
+    )

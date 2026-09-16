@@ -160,6 +160,13 @@ that machine is — by the user's Windows account.
 `data/`, `logs/` and the build output, so a profile cannot be committed even
 if `APB_DATA_DIR` were pointed inside the repository.
 
+Rolling backups of the database live in `backups/`, and a database that could
+not be opened is moved aside as `app.db.damaged` when the user accepts the
+offer to restore a backup, rather than being deleted. Both hold the same
+content as the live database -- watch list, price history, masked payment
+labels -- and neither holds a credential. They stay inside the same per-user
+directory.
+
 ## Screenshots
 
 Failure screenshots are opt-in (on by default, switchable off), stored under

@@ -374,3 +374,127 @@ class TestBackup:
             database.backup(reason=f"r{index}")
         remaining = list(app_paths.backups_dir.glob("app-*.db"))
         assert len(remaining) <= BACKUP_RETENTION
+
+
+class TestDiagnosticsQueries:
+    """The counts the support bundle reports.
+
+    They live here rather than in the diagnostics module so that every SQL
+    statement in the program stays behind ``app/database/`` -- a rule
+    ``tests/unit/test_architecture_review.py`` scans for.
+    """
+
+    def test_row_counts_cover_every_table(self, database: Database) -> None:
+        counts = database.table_row_counts()
+        assert "products" in counts
+        assert "purchase_jobs" in counts
+        assert "schema_migrations" in counts
+        assert all(value == 0 for key, value in counts.items()
+                   if key != "schema_migrations")
+        assert not any(name.startswith("sqlite_") for name in counts)
+
+    def test_row_counts_follow_the_data(self, database: Database) -> None:
+        with database.transaction() as conn:
+            conn.execute(
+                "INSERT INTO products (asin, marketplace, created_at, updated_at) "
+                "VALUES ('B01N5OSTVQ', 'www.amazon.com', '2026-01-01T00:00:00Z', "
+                "'2026-01-01T00:00:00Z')"
+            )
+        assert database.table_row_counts()["products"] == 1
+
+    def test_grouped_counts_bucket_by_column(self, database: Database) -> None:
+        assert database.group_counts("purchase_jobs", "state") == {}
+        assert database.group_counts("watch_jobs", "status") == {}
+
+    def test_an_unknown_table_or_column_is_refused(self, database: Database) -> None:
+        """Identifiers cannot be bound as parameters, so they are checked."""
+        assert database.group_counts("no_such_table", "state") == {}
+        assert database.group_counts("purchase_jobs", "no_such_column") == {}
+        assert database.group_counts('purchase_jobs" --', "state") == {}
+        # And the database is still usable afterwards.
+        assert database.table_row_counts()["purchase_jobs"] == 0
+
+
+class TestRulesBrandMigration:
+    """Migration 2 stores the brand a rule set was created against.
+
+    The backfill matters: rules that already existed were being evaluated
+    against their product's brand, so that is the value that keeps their
+    behaviour the same rather than silently emptying the allow-list.
+    """
+
+    def _v1(self, app_paths: AppPaths) -> Database:
+        """A database at schema version 1 only."""
+        from app.database.migrations import MIGRATIONS
+
+        database = Database(
+            app_paths.database_file, backups_dir=app_paths.backups_dir
+        )
+        # Creates schema_migrations, which _apply writes its row into.
+        assert database.current_version() == 0
+        database._apply(MIGRATIONS[0])  # noqa: SLF001 - building an old schema
+        assert database.current_version() == 1
+        return database
+
+    def test_the_column_did_not_exist_before(self, app_paths: AppPaths) -> None:
+        database = self._v1(app_paths)
+        try:
+            columns = {
+                str(row["name"])
+                for row in database.query_all("PRAGMA table_info(purchase_rules)")
+            }
+            assert "brand" not in columns
+        finally:
+            database.close_all()
+
+    def test_an_existing_rule_is_backfilled_from_its_product(
+        self, app_paths: AppPaths
+    ) -> None:
+        database = self._v1(app_paths)
+        try:
+            with database.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO products (id, asin, marketplace, brand, "
+                    "created_at, updated_at) VALUES "
+                    "(1, 'B01N5OSTVQ', 'www.amazon.com', 'Klein Tools', "
+                    "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+                )
+                conn.execute(
+                    "INSERT INTO purchase_rules (id, expected_asin, created_at, "
+                    "updated_at) VALUES "
+                    "(1, 'B01N5OSTVQ', '2026-01-01T00:00:00Z', "
+                    "'2026-01-01T00:00:00Z')"
+                )
+                conn.execute(
+                    "INSERT INTO watch_jobs (product_id, rules_id, action, "
+                    "interval_seconds, next_check_at, created_at, updated_at) "
+                    "VALUES (1, 1, 'notify', 600, '2026-01-01T00:00:00Z', "
+                    "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+                )
+
+            assert database.migrate() == database.target_version()
+            assert (
+                database.query_scalar("SELECT brand FROM purchase_rules WHERE id = 1")
+                == "Klein Tools"
+            )
+        finally:
+            database.close_all()
+
+    def test_a_rule_with_no_job_is_left_null(self, app_paths: AppPaths) -> None:
+        """A NULL brand means "no manufacturer allowance", which is safe."""
+        database = self._v1(app_paths)
+        try:
+            with database.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO purchase_rules (id, expected_asin, created_at, "
+                    "updated_at) VALUES "
+                    "(7, 'B01N5OSTVQ', '2026-01-01T00:00:00Z', "
+                    "'2026-01-01T00:00:00Z')"
+                )
+            database.migrate()
+            assert (
+                database.query_scalar("SELECT brand FROM purchase_rules WHERE id = 7")
+                is None
+            )
+        finally:
+            database.close_all()

@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -50,6 +49,7 @@ from app.ui.components import (
     role_label,
     severity_for_activity,
 )
+from app.ui.dialogs import confirm_destructive
 
 if TYPE_CHECKING:  # The composition root reaches the automation layer; a
     # screen only needs its shape, so it is not imported at run time.
@@ -128,30 +128,6 @@ _CLEAR_MESSAGE: Final = (
 _TIME_WIDTH: Final = 68
 
 
-def confirm_destructive(
-    parent: QWidget | None,
-    *,
-    title: str,
-    message: str,
-    confirm_label: str,
-) -> bool:
-    """Ask before something the user cannot undo. ``True`` means go ahead.
-
-    A module-level function rather than a method so the wording lives in one
-    place and so a test can stand in for the dialog.
-    """
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle(title)
-    box.setText(title)
-    box.setInformativeText(message)
-    confirm = box.addButton(confirm_label, QMessageBox.ButtonRole.DestructiveRole)
-    cancel = box.addButton("Keep it", QMessageBox.ButtonRole.RejectRole)
-    # Cancel is the default: a stray Return must not clear anything.
-    box.setDefaultButton(cancel)
-    box.setEscapeButton(cancel)
-    box.exec()
-    return box.clickedButton() is confirm
 
 
 def failure_summary(error_code: str | None) -> str | None:
@@ -337,6 +313,7 @@ class ActivityPage(QWidget):
             title=_CLEAR_TITLE,
             message=_CLEAR_MESSAGE,
             confirm_label="Clear history",
+            cancel_label="Keep it",
         ):
             return
         removed = self._activity.clear()

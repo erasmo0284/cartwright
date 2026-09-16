@@ -381,6 +381,31 @@ class TestPriceLimits:
         assert report.passed
 
 
+class TestOrderTotalLimitIsMandatory:
+    """The order total is the only figure that sees the real charge."""
+
+    def test_an_unset_order_total_limit_blocks(self, rules, product, checkout) -> None:
+        unbounded = PurchaseRules(**{**rules.__dict__, "max_order_total": None})
+        report = GUARD.check_final(unbounded, product, checkout)
+        assert not report.passed
+        assert status_of(report, CHECK_MAX_ORDER_TOTAL) is CheckStatus.FAIL
+
+    def test_an_item_limit_alone_does_not_bound_the_order(
+        self, rules, product, checkout
+    ) -> None:
+        """Shipping, fees and quantity all land on the order total."""
+        unbounded = PurchaseRules(
+            **{**rules.__dict__, "max_order_total": None, "max_item_price": usd("120.00")}
+        )
+        expensive = CheckoutSnapshot(
+            **{**checkout.__dict__, "shipping": usd("1800.00"), "order_total": usd("1999.97")}
+        )
+        report = GUARD.check_final(unbounded, product, expensive)
+        assert not report.passed
+        assert status_of(report, CHECK_MAX_ITEM_PRICE) is CheckStatus.PASS
+        assert status_of(report, CHECK_MAX_ORDER_TOTAL) is CheckStatus.FAIL
+
+
 class TestOrderTotalLimit:
     def test_total_above_limit_blocks(self, rules, product, checkout) -> None:
         wrong = CheckoutSnapshot(**{**checkout.__dict__, "order_total": usd("135.01")})
@@ -477,6 +502,7 @@ class TestCartIsolation:
         assert status_of(report, CHECK_CART_CONTENTS) is CheckStatus.FAIL
 
     def test_unrelated_checkout_line_blocks(self, rules, product, checkout) -> None:
+        """A foreign product is caught by the cart-contents check."""
         polluted = CheckoutSnapshot(
             **{
                 **checkout.__dict__,
@@ -487,7 +513,34 @@ class TestCartIsolation:
         )
         report = GUARD.check_final(rules, product, polluted)
         assert not report.passed
-        assert status_of(report, CHECK_ADDONS) is CheckStatus.FAIL
+        assert status_of(report, CHECK_CART_CONTENTS) is CheckStatus.FAIL
+        assert report.blocked_code is ErrorCode.UNEXPECTED_CART_ITEMS
+        # It is not an "add-on": nothing was attached, something else is there.
+        assert status_of(report, CHECK_ADDONS) is CheckStatus.PASS
+
+    def test_allowing_addons_does_not_allow_a_foreign_product(
+        self, rules, product, checkout
+    ) -> None:
+        """"Allow a protection plan" must not mean "buy anything else too"."""
+        permissive = PurchaseRules(**{**rules.__dict__, "allow_addons": True})
+        polluted = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": checkout.lines
+                + (
+                    CartLine(
+                        asin="B0TELEVISION",
+                        title="65-inch television",
+                        quantity=1,
+                        unit_price=usd("899.00"),
+                    ),
+                ),
+                "order_total": usd("130.00"),
+            }
+        )
+        report = GUARD.check_final(permissive, product, polluted)
+        assert not report.passed
+        assert status_of(report, CHECK_CART_CONTENTS) is CheckStatus.FAIL
 
 
 class TestAddonsAndSubscriptions:

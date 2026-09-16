@@ -409,6 +409,29 @@ SUBSCRIBE_AND_SAVE_ROW: Final = chain(
     css("#sns-base-accordion-row"),
 )
 
+#: The buy box, used to scope wording checks. A phrase found anywhere on a
+#: product page means little -- "Subscribe & Save" appears in recommendation
+#: strips -- but the same phrase inside the buy box is about this purchase.
+BUY_BOX_CONTAINER: Final = chain(
+    "buy_box",
+    css("#buybox"),
+    css("#desktop_buybox"),
+    css("#buyBoxAccordion"),
+    css("#rightCol", loose=True),
+)
+
+#: Wording that means Amazon is offering a recurring delivery. The backstop
+#: for a renamed Subscribe & Save row: the ids change, the words do not.
+SUBSCRIPTION_TEXT: Final[tuple[str, ...]] = (
+    "subscribe & save",
+    "subscribe and save",
+    "subscribe now",
+    "deliver every",
+    "delivery every",
+    "recurring delivery",
+    "auto-delivery",
+)
+
 ONE_TIME_PURCHASE_ROW: Final = chain(
     "one_time_purchase_row",
     css("#oneTimeBuyBox"),
@@ -552,6 +575,10 @@ SAVED_FOR_LATER_CONTAINER: Final = chain(
     css("#sc-save-for-later"),
 )
 
+#: Rows inside the saved-for-later section. Amazon uses the same row class
+#: as the active cart, so this is scoped to that container by its caller.
+SAVED_FOR_LATER_ITEMS: Final = ".sc-list-item"
+
 
 # ---------------------------------------------------------------------------
 # Checkout
@@ -621,6 +648,52 @@ CHECKOUT_PAYMENT: Final = chain(
     css("#payment-summary"),
     css("#existing-credit-cards-box", loose=True),
 )
+
+#: Quantity controls on a checkout line, tried before the wording. The newer
+#: checkout renders a ``select``; the classic one renders plain text.
+CHECKOUT_LINE_QUANTITY_CONTROLS: Final[tuple[str, ...]] = (
+    "select[name*='quantity']",
+    "input[name*='quantity']",
+    "select.quantity",
+    "input.quantity",
+)
+
+#: Wordings Amazon uses for a line quantity, in order of specificity.
+CHECKOUT_QUANTITY_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"\bqty\s*:?\s*(\d+)", re.IGNORECASE),
+    re.compile(r"\bquantity\s*:?\s*(\d+)", re.IGNORECASE),
+    re.compile(r"^\s*(\d+)\s*[x×]\s", re.IGNORECASE),
+    re.compile(r"\b(\d+)\s*[x×]\s*\$", re.IGNORECASE),
+)
+
+#: Price and title inside one checkout line, tried in order. Relative to a
+#: line element, so they are plain strings rather than a chain.
+CHECKOUT_LINE_PRICE: Final[tuple[str, ...]] = (
+    ".a-price .a-offscreen",
+    ".a-price",
+    ".a-color-price",
+)
+CHECKOUT_LINE_TITLE: Final[tuple[str, ...]] = (
+    ".sc-product-title",
+    ".a-size-base",
+    "h4",
+    ".a-link-normal",
+)
+
+
+def cart_line_for(asin: str) -> str:
+    """A selector for one cart line, addressed by its ASIN.
+
+    Cart row ids are regenerated on every render, so ``data-asin`` is the
+    only stable handle. The ASIN is validated against
+    :data:`ASIN_PATTERN` first: interpolating an unvalidated value into an
+    attribute selector is how a malformed identifier becomes a broken query.
+    """
+    candidate = asin.strip().upper()
+    if not ASIN_PATTERN.match(candidate):
+        raise ValueError(f"Not a valid ASIN for a selector: {asin!r}")
+    return f"{CART_LINE_ITEMS}[data-asin='{candidate}']"
+
 
 CHECKOUT_LINE_ITEMS: Final = (
     "#spc-orders .a-fixed-left-grid, "

@@ -23,7 +23,8 @@ from app.purchasing.models import (
     PurchaseRules,
     VariationSnapshot,
 )
-from app.purchasing.purchase_guard import GUARD
+from app.purchasing.purchase_guard import CHECK_CART_QUANTITY, GUARD
+from app.purchasing.validation import CheckStatus
 from tests.fixtures import amazon_pages as pages
 
 pytestmark = pytest.mark.integration
@@ -109,6 +110,49 @@ class TestReadCart:
         foreign = cart.foreign_lines(ASIN)
         assert len(foreign) == 2
         assert {line.asin for line in foreign} == {"B0DOGFOOD01", "B0KETTLE001"}
+
+    def test_an_unreadable_cart_quantity_is_never_fabricated_as_one(
+        self, load, product, rules
+    ) -> None:
+        """A quantity nobody could read must not be reported as a PASS.
+
+        This reader used to return 1 whenever the control was missing, on the
+        reasoning that the guard would compare it against the expectation.
+        That holds only when the user asked for a different number: against
+        the common rule "quantity 1", a fabricated 1 is a PASS on a number
+        that was never observed -- in the phase that now runs while the item
+        is sitting in the cart.
+        """
+        html = pages.cart_with_target_only(quantity=1).replace(
+            '<input name="quantityBox" value="1" type="text">', ""
+        )
+        reader = load(CART_URL, html)
+        cart = CART.read_cart(reader)
+
+        assert len(cart.lines) == 1
+        assert cart.lines[0].quantity is None, "an unread quantity is not 1"
+        assert cart.lines[0].line_price is None
+
+        report = GUARD.check_cart(rules, product, cart)
+        assert not report.passed
+        quantity_check = next(
+            check for check in report.checks if check.check_id == CHECK_CART_QUANTITY
+        )
+        assert quantity_check.status is CheckStatus.FAIL
+
+    def test_a_worded_cart_quantity_is_read(self, load) -> None:
+        """Amazon's compact cart renders "Qty: 2" as text, with no control.
+
+        Without this fallback, refusing to fabricate a quantity would block
+        every purchase from that layout.
+        """
+        html = pages.cart_with_target_only(quantity=2).replace(
+            '<input name="quantityBox" value="2" type="text">',
+            '<span class="sc-quantity-display">Qty: 2</span>',
+        )
+        reader = load(CART_URL, html)
+        cart = CART.read_cart(reader)
+        assert cart.lines[0].quantity == 2
 
     def test_saved_for_later_is_counted_but_not_a_cart_line(self, load) -> None:
         reader = load(
@@ -435,12 +479,16 @@ class TestSubmitBarriers:
         )
         page.goto(CHECKOUT_URL, wait_until="domcontentloaded")
         page.expose_function("__noteClick", lambda: order.append("clicked"))
+        # The exposed binding resolves asynchronously, so the listener awaits
+        # it and only then sets the flag the test waits on. Asserting
+        # straight after submit() would race the binding and fail at random.
         page.evaluate(
             """
             const button = document.querySelector("input[name='placeYourOrder1']");
-            button.addEventListener('click', (event) => {
+            button.addEventListener('click', async (event) => {
                 event.preventDefault();
-                window.__noteClick();
+                await window.__noteClick();
+                window.__clickNoted = true;
             });
             """
         )
@@ -455,6 +503,7 @@ class TestSubmitBarriers:
             record_submission=record,
         )
         CHECKOUT.submit(PageReader(page), authorization)
+        page.wait_for_function("window.__clickNoted === true", timeout=10_000)
         assert order == ["recorded", "clicked"]
 
     def test_a_raising_recorder_prevents_the_click(self, load, page, site) -> None:
@@ -463,10 +512,17 @@ class TestSubmitBarriers:
         site.add("gp/buy/spc", pages.checkout_page())
         page.goto(CHECKOUT_URL, wait_until="domcontentloaded")
         page.expose_function("__noteClick", lambda: clicks.append("clicked"))
+        # ``window.__clicked`` is set synchronously inside the listener, so
+        # reading it afterwards cannot race the exposed binding: if the
+        # button had been clicked at all, the flag would already be true.
         page.evaluate(
             """
             document.querySelector("input[name='placeYourOrder1']")
-              .addEventListener('click', (e) => { e.preventDefault(); window.__noteClick(); });
+              .addEventListener('click', (e) => {
+                  e.preventDefault();
+                  window.__clicked = true;
+                  window.__noteClick();
+              });
             """
         )
 
@@ -486,6 +542,7 @@ class TestSubmitBarriers:
         with pytest.raises(AppError) as excinfo:
             CHECKOUT.submit(PageReader(page), authorization)
         assert excinfo.value.code is ErrorCode.DUPLICATE_BLOCKED
+        assert page.evaluate("window.__clicked === true") is False
         assert clicks == []
 
 

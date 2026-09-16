@@ -20,7 +20,12 @@ from app.ui.dialogs.about_dialog import AboutDialog
 from app.ui.dialogs.blocked_dialog import BlockedDialog
 from app.ui.dialogs.cart_permission_dialog import CartPermissionDialog
 from app.ui.dialogs.confirm_purchase_dialog import ConfirmPurchaseDialog
-from app.ui.dialogs.error_dialog import ErrorDialog, confirm, show_error
+from app.ui.dialogs.error_dialog import (
+    ErrorDialog,
+    confirm,
+    confirm_destructive,
+    show_error,
+)
 from app.ui.dialogs.test_result_dialog import TestResultDialog
 from app.ui.dialogs.uncertain_order_dialog import UncertainOrderDialog
 from app.ui.dialogs.verification_dialog import VerificationDialog
@@ -35,5 +40,6 @@ __all__ = [
     "UncertainOrderDialog",
     "VerificationDialog",
     "confirm",
+    "confirm_destructive",
     "show_error",
 ]

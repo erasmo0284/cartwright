@@ -547,9 +547,10 @@ class PurchaseRepository:
             )
             uncertain.append(job.id)
 
-        # Anything earlier in the sequence never reached a submission. The
-        # submitted-attempt check is belt and braces: if an attempt was
-        # somehow marked submitted, treat the job as uncertain instead.
+        # Anything earlier in the sequence should never have reached a
+        # submission. The submitted-attempt check is belt and braces: if an
+        # attempt was somehow marked submitted, the job is uncertain, never
+        # failed.
         for row in self._db.query_all(
             "SELECT * FROM purchase_jobs WHERE state IN "
             "('created', 'product_check', 'rule_validation', 'cart_preparation', "
@@ -557,16 +558,22 @@ class PurchaseRepository:
         ):
             job = PurchaseJobRecord.from_row(row)
             if self.has_submitted(job.id):
+                # An order may exist, so this is UNKNOWN, not FAILED. FAILED
+                # would say "nothing was ordered", free the single-in-flight
+                # slot for the product, and never prompt the user -- which is
+                # how a crash could turn into a second order.
                 self.transition(
                     job.id,
-                    PurchaseState.FAILED,
+                    PurchaseState.UNKNOWN,
                     reason="interrupted after a recorded submission",
                     outcome_code=ErrorCode.ORDER_RESULT_UNCERTAIN.value,
                     outcome_detail=(
                         "This purchase was interrupted after it had been "
-                        "submitted. Check your Amazon orders."
+                        "submitted, so it cannot tell whether Amazon accepted "
+                        "it. Check your Amazon orders. It will not try again."
                     ),
                 )
+                uncertain.append(job.id)
                 continue
             self.transition(
                 job.id,

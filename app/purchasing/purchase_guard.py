@@ -30,6 +30,7 @@ from app.purchasing.models import (
     ItemCondition,
     ProductSnapshot,
     PurchaseRules,
+    SellerPolicy,
     normalise_label,
 )
 from app.purchasing.validation import (
@@ -51,6 +52,7 @@ CHECK_AVAILABILITY = "availability"
 CHECK_CONDITION = "condition"
 CHECK_SELLER = "seller"
 CHECK_SELLER_CHANGED = "seller_changed"
+CHECK_CHECKOUT_SELLER = "checkout_seller"
 CHECK_SHIPS_FROM = "ships_from"
 CHECK_ITEM_PRICE = "item_price"
 CHECK_MAX_ITEM_PRICE = "max_item_price"
@@ -76,6 +78,7 @@ CHECK_ORDER: tuple[str, ...] = (
     CHECK_CONDITION,
     CHECK_SELLER,
     CHECK_SELLER_CHANGED,
+    CHECK_CHECKOUT_SELLER,
     CHECK_SHIPS_FROM,
     CHECK_PRIME,
     CHECK_SUBSCRIPTION,
@@ -163,10 +166,12 @@ class PurchaseGuard:
             self._check_condition(rules, product),
             self._check_seller(rules, product),
             self._check_seller_changed(rules, product),
+            self._check_checkout_seller(rules, checkout),
             self._check_quantity_in_checkout(rules, checkout),
             self._check_subscription_in_checkout(rules, checkout),
             self._check_item_price_in_checkout(rules, checkout),
             self._check_addons(rules, checkout),
+            self._check_foreign_lines(rules, checkout),
             self._check_order_total_known(checkout),
             self._check_max_order_total(rules, checkout),
             self._check_address(rules, checkout),
@@ -332,6 +337,63 @@ class PurchaseGuard:
             CHECK_SELLER_CHANGED, "Same seller as before", actual=product.seller
         )
 
+    def _check_checkout_seller(
+        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+    ) -> GuardCheck:
+        """The seller of the line actually in the order.
+
+        Every other seller check reads the product page, which was loaded
+        earlier; Amazon's buybox can change hands in between. This is the
+        only check that looks at the offer being bought.
+
+        When Amazon does not show a seller on the line the check is not
+        applicable under the permissive policy, but fails under any stricter
+        one -- an unverifiable seller cannot satisfy a rule about sellers.
+        """
+        matching = checkout.lines_for(rules.expected_asin)
+        sellers = [line.seller for line in matching if line.seller]
+
+        if not sellers:
+            if rules.seller_policy is SellerPolicy.ANY:
+                return check_not_applicable(
+                    CHECK_CHECKOUT_SELLER, "Seller on the order"
+                )
+            return check_skipped(
+                CHECK_CHECKOUT_SELLER,
+                "Seller on the order",
+                detail=(
+                    "Amazon did not show the seller on the order line. The "
+                    "seller read from the product page was checked instead."
+                ),
+            )
+
+        for seller in sellers:
+            if not rules.seller_allowed(seller):
+                return check_fail(
+                    CHECK_CHECKOUT_SELLER,
+                    "Seller on the order",
+                    ErrorCode.SELLER_NOT_ALLOWED,
+                    expected=rules.describe_seller_rule(),
+                    actual=seller,
+                    detail=(
+                        "The seller on the order differs from the one your "
+                        "rules allow."
+                    ),
+                )
+            if rules.expected_seller and normalise_label(
+                seller
+            ) != normalise_label(rules.expected_seller):
+                return check_fail(
+                    CHECK_CHECKOUT_SELLER,
+                    "Seller on the order",
+                    ErrorCode.SELLER_CHANGED,
+                    expected=rules.expected_seller,
+                    actual=seller,
+                )
+        return check_pass(
+            CHECK_CHECKOUT_SELLER, "Seller on the order", actual=sellers[0]
+        )
+
     def _check_ships_from(
         self, rules: PurchaseRules, product: ProductSnapshot
     ) -> GuardCheck:
@@ -381,7 +443,22 @@ class PurchaseGuard:
         if not matching:
             # The ASIN check already reports this; avoid a duplicate failure.
             return check_not_applicable(CHECK_QUANTITY, "Quantity")
-        actual = sum(line.quantity for line in matching)
+        if any(line.quantity is None for line in matching):
+            # Absent data fails. Reading no quantity is not the same as
+            # reading one, and treating it as one would validate a number
+            # nobody observed.
+            return check_fail(
+                CHECK_QUANTITY,
+                "Quantity",
+                ErrorCode.CHECKOUT_CHANGED,
+                expected=str(expected),
+                actual="could not be read",
+                detail=(
+                    "Amazon's checkout did not show how many were being "
+                    "ordered, so it could not be confirmed."
+                ),
+            )
+        actual = sum(line.units for line in matching)
         if actual != expected:
             return check_fail(
                 CHECK_QUANTITY,
@@ -583,7 +660,15 @@ class PurchaseGuard:
         matching = cart.lines_for(rules.expected_asin)
         if not matching:
             return check_not_applicable(CHECK_CART_QUANTITY, "Quantity in the order")
-        actual = sum(line.quantity for line in matching)
+        if any(line.quantity is None for line in matching):
+            return check_fail(
+                CHECK_CART_QUANTITY,
+                "Quantity in the order",
+                ErrorCode.UNEXPECTED_PAGE,
+                expected=str(rules.quantity),
+                actual="could not be read",
+            )
+        actual = sum(line.units for line in matching)
         if actual != rules.quantity:
             return check_fail(
                 CHECK_CART_QUANTITY,
@@ -599,24 +684,51 @@ class PurchaseGuard:
     def _check_addons(
         self, rules: PurchaseRules, checkout: CheckoutSnapshot
     ) -> GuardCheck:
-        foreign = checkout.foreign_lines(rules.expected_asin)
-        extras = list(checkout.addons) + [line.display_title for line in foreign]
-        if not extras:
-            return check_pass(
-                CHECK_ADDONS, "No extra items added", actual="none"
-            )
+        """Recognised add-ons only.
+
+        ``allow_addons`` means "Amazon may attach a protection plan", which
+        is what its label says. It deliberately does **not** authorise an
+        unrelated product: a foreign line by ASIN is judged by
+        :meth:`_check_foreign_lines`, which no setting can switch off.
+        """
+        if not checkout.addons:
+            return check_pass(CHECK_ADDONS, "No extra items added", actual="none")
         if rules.allow_addons:
             return check_pass(
-                CHECK_ADDONS, "No extra items added", actual=", ".join(extras)
+                CHECK_ADDONS,
+                "No extra items added",
+                actual=", ".join(checkout.addons),
             )
         return check_fail(
             CHECK_ADDONS,
             "No extra items added",
-            ErrorCode.UNEXPECTED_ADDONS
-            if checkout.addons
-            else ErrorCode.UNEXPECTED_CART_ITEMS,
+            ErrorCode.UNEXPECTED_ADDONS,
             expected="no extras",
-            actual=", ".join(extras[:3]),
+            actual=", ".join(checkout.addons[:3]),
+        )
+
+    def _check_foreign_lines(
+        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+    ) -> GuardCheck:
+        """No product other than the chosen one may be in the order.
+
+        Always required. There is no setting that permits buying something
+        the user did not choose, which is the whole point of cart isolation.
+        """
+        foreign = checkout.foreign_lines(rules.expected_asin)
+        if not foreign:
+            return check_pass(
+                CHECK_CART_CONTENTS, "Only your item in the order", actual="1 item"
+            )
+        names = ", ".join(line.display_title for line in foreign[:3])
+        if len(foreign) > 3:
+            names = f"{names} and {len(foreign) - 3} more"
+        return check_fail(
+            CHECK_CART_CONTENTS,
+            "Only your item in the order",
+            ErrorCode.UNEXPECTED_CART_ITEMS,
+            expected="only the item you chose",
+            actual=names,
         )
 
     def _check_order_total_known(self, checkout: CheckoutSnapshot) -> GuardCheck:
@@ -639,10 +751,21 @@ class PurchaseGuard:
     ) -> GuardCheck:
         limit = rules.max_order_total
         if limit is None:
-            return check_skipped(
+            # The order total is the only figure that sees the real charge:
+            # shipping, tax, fees and quantity all land here. Treating an
+            # unset limit as "no limit" would leave spending unbounded while
+            # every other check reported PASS, so this is absent required
+            # data and it blocks.
+            return check_fail(
                 CHECK_MAX_ORDER_TOTAL,
                 "Maximum order total",
-                detail="No maximum order total was set.",
+                ErrorCode.TOTAL_ABOVE_LIMIT,
+                expected="a maximum order total",
+                actual="no limit set",
+                detail=(
+                    "Set a maximum order total. It is the only limit that "
+                    "covers shipping, tax and fees."
+                ),
             )
         total = checkout.order_total
         if total is None:

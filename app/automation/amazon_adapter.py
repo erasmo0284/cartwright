@@ -278,11 +278,17 @@ class AmazonAdapter:
         marketplace: str = selectors.DEFAULT_MARKETPLACE,
         journal: IsolationJournal | None = None,
         on_journal_change: "object | None" = None,
+        on_cart_read: "object | None" = None,
     ) -> PreparedPurchase:
         """Take the purchase as far as the final review, and stop there.
 
         Never submits. The caller decides what happens next, and in test mode
         nothing happens at all beyond this point.
+
+        ``on_cart_read`` is called with ``(product, cart)`` on the cart route,
+        after the item has been added and before the checkout is entered. It
+        is where the caller runs the pre-checkout guard phase, and it may
+        raise to stop the purchase while the item is still only in a cart.
         """
         journal = journal or IsolationJournal(strategy=plan.strategy)
         addons: tuple[str, ...] = ()
@@ -337,6 +343,15 @@ class AmazonAdapter:
                 session, selectors.cart_url(), expect=PageKind.CART
             )
             cart = CART.read_cart(cart_reader)
+
+            # The pre-checkout guard phase runs here, on the caller's side,
+            # while the item is still only in a cart and no checkout has been
+            # entered. It may raise to stop the purchase.
+            if callable(on_cart_read):
+                on_cart_read(product, cart)
+
+            # Kept as defence in depth: if a caller supplies no callback, an
+            # unrelated line still stops the purchase here.
             foreign = cart.foreign_lines(rules.expected_asin)
             if foreign:
                 raise AppError(

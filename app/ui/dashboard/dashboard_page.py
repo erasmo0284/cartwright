@@ -40,9 +40,9 @@ from app.ui.components import (
     StatusBadge,
     StatusLabel,
     SubtleButton,
+    clear_layout,
 )
 from app.ui.components.badge import severity_for_activity
-from app.ui.components.common import clear_layout
 from app.ui.theme import StatusSeverity, font_body, font_title
 
 logger = logging.getLogger("app.ui.dashboard")

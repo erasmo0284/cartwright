@@ -173,7 +173,9 @@ class NewPurchasePage(QWidget):
         self._input_hint = QLabel(
             "Nothing is bought by checking a product. This only reads the page."
         )
+        self._input_hint.setObjectName("InlineHint")
         self._input_hint.setProperty("role", "caption")
+        self._input_hint.setProperty("severity", StatusSeverity.NEUTRAL.value)
         self._input_hint.setWordWrap(True)
         card.add_widget(self._input_hint)
         return card
@@ -402,9 +404,16 @@ class NewPurchasePage(QWidget):
             self._prepare_button.setText("Buy with confirmation")
 
     def _set_input_hint(self, text: str, severity: StatusSeverity) -> None:
+        """Set the line under the input, coloured by what it means.
+
+        The severity is what the stylesheet matches on, so an error under the
+        field cannot end up looking like ordinary guidance.
+        """
         self._input_hint.setText(text)
-        self._input_hint.setProperty(
-            "role", "caption" if severity is StatusSeverity.NEUTRAL else "caption"
+        self._input_hint.setProperty("severity", severity.value)
+        # Screen readers announce the meaning as well as the words.
+        self._input_hint.setAccessibleDescription(
+            text if severity is StatusSeverity.NEUTRAL else f"{severity.label}: {text}"
         )
         from app.ui.components.common import repolish
 

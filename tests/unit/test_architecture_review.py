@@ -2,15 +2,17 @@
 
 Two kinds of test live here.
 
-**Defect proofs.** Each is marked ``xfail(strict=True)`` and asserts the
-*correct* behaviour, so the suite stays green while the defect exists and
-turns red (XPASS) the moment someone fixes it and forgets to remove the
-marker. The reason string names the file and line of the defect.
+**Regression pins.** Each asserts the correct behaviour of something that was
+once a defect. They started life as ``xfail(strict=True)`` defect proofs, so
+that fixing the defect turned the suite red (XPASS) and forced the marker off
+and the test into the ordinary suite. The docstring of each says what the
+defect was and why the behaviour matters.
 
 **Invariants.** Mechanical checks of the layering rules ``docs/ARCHITECTURE.md``
-claims. The ones that hold are plain tests; the ones that do not are marked
-xfail with the offending lines listed, so the claim and the reality are both
-written down.
+claims. All of them now hold, so all of them are plain tests. A claim the code
+does not keep belongs here as an ``xfail(strict=True)`` naming the offending
+lines, so the claim and the reality are both written down and reconciling
+either one turns the test red rather than leaving a stale note behind.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import ast
 import inspect
 import pathlib
 import queue
+import textwrap
 import threading
 from typing import Any
 
@@ -197,7 +200,7 @@ def test_mark_submitted_accepts_the_state_the_submit_path_actually_uses(
 
 
 # ---------------------------------------------------------------------------
-# Defect 1 -- a BaseException kills the worker thread and orphans the queue
+# Fixed: a BaseException used to kill the worker thread and orphan the queue
 # ---------------------------------------------------------------------------
 
 
@@ -228,17 +231,21 @@ class _StubManager:
         raise AssertionError("no page in these tests")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: app/automation/browser_worker.py:341 catches Exception, not "
-        "BaseException, so a BaseException raised inside a task escapes "
-        "_execute and _loop, the thread dies, and every task queued "
-        "afterwards is never served and never signalled."
-    ),
-)
 def test_worker_survives_a_base_exception_in_a_task(app_paths: AppPaths) -> None:
-    """One task raising a BaseException must not stop the queue."""
+    """One task raising a BaseException must not stop the queue.
+
+    The worker thread is the only thing that services the queue, so an escape
+    from ``_execute`` is not one lost task: every task queued afterwards is
+    never run, never failed and never signalled, and the purchase job behind
+    it stays in a live state that blocks its product for good. The app keeps
+    looking alive while doing nothing.
+
+    ``_execute`` therefore catches ``BaseException`` rather than
+    ``Exception``, reports it as a wrapped ``AppError``, and deliberately does
+    not re-raise. Shutdown is requested through the queue sentinel instead,
+    so refusing to die here cannot prevent exiting -- which the join below
+    also checks.
+    """
     worker = BrowserWorker(app_paths)
     worker._manager = _StubManager()  # type: ignore[assignment]
 
@@ -254,45 +261,78 @@ def test_worker_survives_a_base_exception_in_a_task(app_paths: AppPaths) -> None
 
     worker.submit("explodes", explode)
     worker.submit("ordinary", ordinary)
-    worker.shutdown()
 
     thread = threading.Thread(target=worker.run, name="worker-under-test")
     thread.start()
-    thread.join(timeout=10)
+    try:
+        assert second_ran.wait(timeout=10), (
+            "the task queued after the failure never ran"
+        )
+    finally:
+        worker.shutdown()
+        thread.join(timeout=10)
 
     assert not thread.is_alive(), "worker thread did not finish"
-    assert second_ran.is_set(), "the task queued after the failure never ran"
     assert served == ["second"]
 
 
-def test_wrap_unexpected_is_typed_for_baseexception_but_never_given_one() -> None:
-    """The helper's own signature shows the intent the except clause misses."""
+def test_execute_handles_baseexception_and_does_not_re_raise() -> None:
+    """The structure that makes the behaviour above true, pinned directly.
+
+    ``_wrap_unexpected`` is annotated for ``BaseException``, and the handler
+    that feeds it has to match that annotation: a handler narrowed back to
+    ``Exception``, or one that re-raised after reporting, would reintroduce
+    the orphaned queue. Both are checked here because the behavioural test
+    above can only observe one exception type at a time, while this covers
+    every ``BaseException`` there is.
+    """
     signature = inspect.signature(BrowserWorker._wrap_unexpected)
     assert signature.parameters["exc"].annotation == "BaseException"
 
     source = inspect.getsource(BrowserWorker._execute)
-    assert "except Exception as exc" in source
-    assert "except BaseException" not in source
+    tree = ast.parse(textwrap.dedent(source))
+    handlers = [
+        node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
+    ]
+    caught = {
+        node.type.id
+        for node in handlers
+        if isinstance(node.type, ast.Name)
+    }
+    assert "BaseException" in caught
+    assert "Exception" not in caught
+
+    catch_all = [
+        node
+        for node in handlers
+        if isinstance(node.type, ast.Name) and node.type.id == "BaseException"
+    ]
+    assert len(catch_all) == 1
+    reraises = [
+        node for node in ast.walk(catch_all[0]) if isinstance(node, ast.Raise)
+    ]
+    assert not reraises, "the BaseException handler must not re-raise"
 
 
 # ---------------------------------------------------------------------------
-# Defect 2 -- the browser-unavailable state is immediately overwritten
+# Fixed: the browser-unavailable state used to be immediately overwritten
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: app/automation/browser_worker.py:291 sets IDLE unconditionally "
-        "after the NEEDS_BROWSER/FAILED branch at 281-285, so the status bar "
-        "reports 'Ready' when the browser could not be prepared and "
-        "MainWindow._on_worker_state's NEEDS_BROWSER message (main_window.py:"
-        "481) is unreachable."
-    ),
-)
 def test_worker_reports_a_browser_problem_rather_than_ready(
     app_paths: AppPaths,
 ) -> None:
+    """A browser that could not be prepared must not be reported as Ready.
+
+    ``run`` used to set ``IDLE`` unconditionally, one branch after choosing
+    ``NEEDS_BROWSER``, so the status bar said "Ready" while nothing could
+    work and ``MainWindow._on_worker_state``'s NEEDS_BROWSER message -- the
+    one that tells the user how to repair the browser from Settings -- was
+    unreachable. A ``browser_ready`` flag now gates the IDLE report.
+
+    The queue is still served either way, on purpose: every task then fails
+    with a clear message rather than being silently swallowed.
+    """
     worker = BrowserWorker(app_paths)
     worker._manager = _StubManager(  # type: ignore[assignment]
         fail=AppError(ErrorCode.BROWSER_UNAVAILABLE)
@@ -308,27 +348,29 @@ def test_worker_reports_a_browser_problem_rather_than_ready(
 
 
 # ---------------------------------------------------------------------------
-# Defect 3 -- the preparation error path runs twice
+# Fixed: the preparation error path used to run twice
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: app/purchasing/purchase_service.py:386-388 handles the error and "
-        "then re-raises, so BrowserWorker emits `failed` and _on_failed "
-        "(line 949) handles the same job a second time, overwriting the "
-        "NEEDS_USER the first pass chose with FAILED and making every "
-        "NEEDS_USER resume transition unreachable."
-    ),
-)
 def test_needs_user_survives_the_worker_failure_signal(
     service: PurchaseService,
     repositories: dict[str, Any],
     snapshot: ProductSnapshot,
     rules: PurchaseRules,
 ) -> None:
-    """A verification challenge must leave the job waiting for the user."""
+    """A verification challenge must leave the job waiting for the user.
+
+    ``_run_preparation`` handles an ``AppError`` and then re-raises it, so
+    the worker logs it and emits ``failed`` for the same job -- and
+    ``_on_failed`` would decide the outcome a second time. The second pass
+    used to overwrite the ``NEEDS_USER`` the first pass chose with
+    ``FAILED``, which is terminal, making every ``NEEDS_USER`` resume
+    transition in the state table unreachable.
+
+    ``_handle_preparation_error`` now records the job in
+    ``PurchaseService._reported``, and ``_on_failed`` returns early for it.
+    Both calls are made here in the order the worker makes them.
+    """
     from app.automation.cart_manager import IsolationJournal
 
     job = _job_at(repositories, snapshot, rules, PurchaseState.PRODUCT_CHECK)
@@ -351,21 +393,23 @@ def test_needs_user_survives_the_worker_failure_signal(
     assert repositories["purchases"].get(job.id).state is PurchaseState.NEEDS_USER
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: the same double handling makes purchase_uncertain fire twice for "
-        "one job, so MainWindow._on_purchase_uncertain (app/ui/main_window.py:"
-        "677) shows the 'did the order get placed?' dialog twice and writes "
-        "two activity entries."
-    ),
-)
 def test_uncertain_outcome_is_raised_with_the_user_once(
     service: PurchaseService,
     repositories: dict[str, Any],
     snapshot: ProductSnapshot,
     rules: PurchaseRules,
 ) -> None:
+    """The "did the order get placed?" question is asked exactly once.
+
+    The same double handling used to make ``purchase_uncertain`` fire twice
+    for one job, so ``MainWindow._on_purchase_uncertain`` showed its modal,
+    alarming dialog twice and wrote two activity entries for one event.
+
+    Two independent guards now hold this: ``_reported`` stops the second
+    decision, and ``_mark_uncertain`` is idempotent -- it returns early when
+    the job is already ``UNKNOWN`` -- so any other second caller is also
+    absorbed.
+    """
     from app.automation.cart_manager import IsolationJournal
 
     job = _job_at(
@@ -388,22 +432,24 @@ def test_uncertain_outcome_is_raised_with_the_user_once(
     assert prompts == [job.id]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: app/purchasing/purchase_service.py:842 and :967 pass "
-        "`products.get(...)`, declared `ProductRecord | None`, into "
-        "_mark_uncertain, which dereferences product.display_title at line "
-        "661. The job is moved to UNKNOWN first, so the AttributeError leaves "
-        "it unresolved and the product permanently unbuyable."
-    ),
-)
 def test_an_uncertain_outcome_is_reported_even_with_no_product_row(
     service: PurchaseService,
     repositories: dict[str, Any],
     snapshot: ProductSnapshot,
     rules: PurchaseRules,
 ) -> None:
+    """Losing the product's name must not stop the user being asked.
+
+    ``_fail`` and ``_on_cancelled`` pass ``products.get(...)``, declared
+    ``ProductRecord | None``, into ``_mark_uncertain``. A deleted watch or a
+    pruned orphan makes that ``None``, and ``_mark_uncertain`` used to
+    dereference ``product.display_title``. Because the job is moved to
+    ``UNKNOWN`` *first*, the resulting ``AttributeError`` left it in that
+    state with nobody ever prompted -- and ``UNKNOWN`` is live, so the
+    product became permanently unbuyable with no way out.
+
+    ``_mark_uncertain`` now accepts ``None`` and substitutes a neutral name.
+    """
     job = _job_at(
         repositories, snapshot, rules, *_TO_FINAL, PurchaseState.SUBMITTING
     )
@@ -414,6 +460,10 @@ def test_an_uncertain_outcome_is_reported_even_with_no_product_row(
 
     assert repositories["purchases"].get(job.id).state is PurchaseState.UNKNOWN
     assert prompts == [job.id], "the user was never asked what happened"
+
+    # Idempotent: a second caller must not raise the question again.
+    service._mark_uncertain(job.id, None, "asked again")
+    assert prompts == [job.id]
 
 
 # ---------------------------------------------------------------------------
@@ -529,17 +579,27 @@ def _python_files() -> list[pathlib.Path]:
     return sorted(APP_ROOT.rglob("*.py"))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "INCONSISTENCY: docs/ARCHITECTURE.md says every CSS string lives in "
-        "app/automation/selectors.py. Two modules build their own: "
-        "checkout_manager.py:267 hard-codes ('.a-price .a-offscreen', "
-        "'.a-price', '.a-color-price') and cart_manager.py:560 concatenates "
-        "an unescaped [data-asin=...] attribute selector."
-    ),
-)
 def test_only_the_selectors_module_holds_dom_selectors() -> None:
+    """No module outside ``selectors.py`` composes a DOM selector.
+
+    ``docs/ARCHITECTURE.md`` puts every CSS string in
+    ``app/automation/selectors.py`` so that a change in Amazon's markup is a
+    one-file change and every selector is reviewable in one place.
+
+    Two modules used to break it: ``checkout_manager`` hard-coded its
+    line-price selectors, and ``cart_manager`` concatenated an
+    ``[data-asin=...]`` attribute selector from an unvalidated ASIN. Both now
+    go through ``selectors`` -- ``CHECKOUT_LINE_PRICE`` and
+    ``selectors.cart_line_for``, which validates the ASIN against
+    ``ASIN_PATTERN`` before interpolating it.
+
+    The markers below catch composition: attribute selectors, Amazon's price
+    classes, and the pseudo-class and engine-prefix syntax that only appears
+    in a hand-built selector. Two bare HTML element names (``"body"`` in
+    ``page_reader`` and ``"option"`` in ``product_parser``) do still live
+    outside the module; they are not Amazon markup, so nothing about them can
+    break when a layout changes, which is why the markers do not chase them.
+    """
     markers = ("[data-", "a-price", "a-offscreen", ":has(", "nth-child", "css=")
     allowed = {APP_ROOT / "automation" / "selectors.py"}
     offenders: list[str] = []
@@ -552,16 +612,21 @@ def test_only_the_selectors_module_holds_dom_selectors() -> None:
     assert not offenders, f"DOM selectors outside selectors.py: {offenders}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "INCONSISTENCY: docs/ARCHITECTURE.md puts all SQL behind "
-        "app/database/. SettingsService issues its own (config.py:249, :364) "
-        "and the support bundle runs ad-hoc introspection queries with "
-        "f-string table and column names (diagnostics/report.py:316, :333)."
-    ),
-)
 def test_only_the_database_package_issues_sql() -> None:
+    """No package outside ``app/database/`` writes a SQL statement.
+
+    ``docs/ARCHITECTURE.md`` puts all SQL behind ``app/database/`` so the
+    schema has one owner and every query is reviewable in one place.
+
+    Two callers used to break it. ``SettingsService`` issued its own
+    statements, and the support bundle ran ad-hoc introspection queries that
+    built table and column names with f-strings -- identifiers cannot be
+    bound as parameters, so that is the one place in the program where a
+    query is assembled by concatenation. Both now go through
+    ``Database.table_row_counts`` and ``Database.group_counts``, and
+    ``group_counts`` checks the table and column against the live schema
+    before interpolating them.
+    """
     statements = (
         "SELECT ",
         "INSERT INTO",

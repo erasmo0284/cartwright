@@ -275,9 +275,11 @@ class BrowserWorker(QObject):
     def run(self) -> None:
         """The thread body. Connected to ``QThread.started``."""
         self._set_state(WorkerState.STARTING)
+        browser_ready = True
         try:
             self._ensure_browser()
         except AppError as error:
+            browser_ready = False
             self._set_state(
                 WorkerState.NEEDS_BROWSER
                 if error.code is ErrorCode.BROWSER_UNAVAILABLE
@@ -288,13 +290,44 @@ class BrowserWorker(QObject):
             # message, which is better than silently swallowing requests, and
             # the user can repair the browser from Settings.
 
-        self._set_state(WorkerState.IDLE)
+        # Only report readiness when the browser is genuinely ready. Setting
+        # IDLE unconditionally here would overwrite NEEDS_BROWSER one line
+        # after it was set, so the status bar would claim "Ready" while
+        # nothing could work.
+        if browser_ready:
+            self._set_state(WorkerState.IDLE)
         try:
             self._loop()
         finally:
             self._manager.stop()
+            self._drain_queue()
             self._set_state(WorkerState.STOPPED)
             logger.info("Browser worker stopped")
+
+    def _drain_queue(self) -> None:
+        """Report every task still queued as cancelled, so nothing is lost.
+
+        Without this, a shutdown (or a thread that exited unexpectedly) would
+        leave callers waiting on a signal that can never arrive, and any
+        purchase job behind it stuck in a live state.
+        """
+        while True:
+            try:
+                _priority, _sequence, task = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if task is None:
+                continue
+            logger.info(
+                "Task abandoned because the worker stopped",
+                extra={"task_id": task.task_id, "label": task.label},
+            )
+            self.cancelled.emit(task.task_id, task.context)
+        with self._lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for task in pending:
+            self.cancelled.emit(task.task_id, task.context)
 
     def _loop(self) -> None:
         while True:
@@ -338,13 +371,25 @@ class BrowserWorker(QObject):
             )
             self.failed.emit(task.task_id, error, task.context)
             return
-        except Exception as exc:  # noqa: BLE001 - a worker must never die
+        except BaseException as exc:  # noqa: BLE001 - see below
+            # BaseException, not Exception. A KeyboardInterrupt or a
+            # SystemExit escaping here would kill the worker thread, and
+            # because the thread is the only thing servicing the queue, every
+            # later task would be enqueued and never run, never fail and
+            # never report -- leaving the in-flight purchase job live, which
+            # blocks that product permanently. Reporting first and re-raising
+            # after keeps the caller informed either way.
             wrapped = self._wrap_unexpected(exc, task)
             logger.exception(
                 "Task raised an unexpected error",
                 extra={"task_id": task.task_id, "label": task.label},
             )
             self.failed.emit(task.task_id, wrapped, task.context)
+            # Deliberately not re-raised. This thread is the only thing that
+            # services the queue, so letting anything escape would silently
+            # stop all monitoring and leave the app looking alive while doing
+            # nothing. Shutdown is requested explicitly, through the queue
+            # sentinel, so refusing to die here cannot prevent exiting.
             return
         finally:
             self._tidy_up()

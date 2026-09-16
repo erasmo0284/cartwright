@@ -83,7 +83,7 @@ Run the tests:
 .venv\Scripts\python.exe -m pytest tests
 ```
 
-880 tests. The integration tests drive a real Chromium against local fixture
+1,083 tests. The integration tests drive a real Chromium against local fixture
 pages, with every request intercepted, so they cannot reach Amazon and cannot
 place an order.
 

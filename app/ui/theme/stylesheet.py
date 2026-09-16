@@ -137,6 +137,21 @@ QLabel[role="metricLabel"]:disabled {
     color: ${textDisabled};
 }
 
+/* An inline hint under an input. It carries a severity because the same
+ * line is used for "nothing is bought by checking" and for "that link was
+ * not an Amazon product", and those two must not look identical. */
+#InlineHint {
+    color: ${textMuted};
+}
+
+#InlineHint[severity="success"] { color: ${success}; }
+#InlineHint[severity="warning"] { color: ${warning}; }
+#InlineHint[severity="blocked"] { color: ${blocked}; }
+#InlineHint[severity="error"]   { color: ${danger}; font-weight: 600; }
+#InlineHint[severity="info"]    { color: ${info}; }
+#InlineHint[severity="neutral"] { color: ${textMuted}; }
+#InlineHint:disabled { color: ${textDisabled}; }
+
 /* ----------------------------------------------------------------------
  * Status badges. The severity property carries the meaning; the colours
  * are the (foreground, background) pairs from tokens.Semantic.

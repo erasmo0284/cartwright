@@ -150,6 +150,29 @@ gets immediate SmartScreen trust.
 The embedded version resource (publisher, product name, version,
 description) is there partly to help reputation on an unsigned binary.
 
+## This build
+
+The artefacts that accompany this documentation were produced on
+2026-09-16 with:
+
+| | |
+|---|---|
+| Version | 1.0.0 (`release`) |
+| Python | 3.14.6 (64-bit) |
+| PySide6-Essentials | 6.11.2 (Qt 6.11.2) |
+| Playwright | 1.63.0 (Chromium build 1243) |
+| PyInstaller | 6.22.3 |
+| Inno Setup | 6.7.3 |
+| Host | Windows 11 Pro 26200 |
+| `dist\AmazonPurchaseBot\` | 213 MB, onedir, no UPX |
+| `AmazonPurchaseBot-1.0.0-Setup.exe` | 57,918,659 bytes (55 MB) |
+| Installer SHA-256 | `0e5e6a29bfa4949d68ac6ec68bbe0ca313cdd15d4765179bda808d9ad4519acf` |
+| Installed size | 217 MB in `%LOCALAPPDATA%\Programs\AmazonPurchaseBot` |
+
+The browser is **not** in either artefact: it is downloaded on first run into
+the user's own data directory, which is why the installer is 55 MB rather
+than half a gigabyte.
+
 ## Repeatable builds
 
 - `app/version.py` is the single source of the version. `scripts/build.py`

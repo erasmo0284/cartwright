@@ -13,6 +13,7 @@ from app.database.repositories.orders import OrderRepository
 from app.database.repositories.products import ProductRepository
 from app.database.repositories.purchases import PurchaseRepository
 from app.database.repositories.rules import RulesRepository
+from app.database.repositories.settings import SettingsRepository
 from app.database.repositories.watch import WatchRepository
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "ProductRepository",
     "PurchaseRepository",
     "RulesRepository",
+    "SettingsRepository",
     "WatchRepository",
 ]

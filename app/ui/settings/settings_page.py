@@ -44,7 +44,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QRadioButton,
     QScrollArea,
     QVBoxLayout,
@@ -72,6 +71,7 @@ from app.ui.components import (
     SubtleButton,
     role_label,
 )
+from app.ui.dialogs import confirm_destructive
 from app.ui.theme import StatusSeverity, ThemeManager, ThemeMode
 from app.version import BUILD_CHANNEL, VERSION
 from app.winint import startup
@@ -148,30 +148,6 @@ _HEALTH_SEVERITIES: Final[dict[str, StatusSeverity]] = {
 }
 
 
-def confirm_destructive(
-    parent: QWidget | None,
-    *,
-    title: str,
-    message: str,
-    confirm_label: str,
-) -> bool:
-    """Ask before something costly or irreversible. ``True`` means go ahead.
-
-    A module-level function rather than a method so the wording lives in one
-    place and so a test can stand in for the dialog.
-    """
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle(title)
-    box.setText(title)
-    box.setInformativeText(message)
-    confirm = box.addButton(confirm_label, QMessageBox.ButtonRole.DestructiveRole)
-    cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-    # Cancel is the default, so Return never commits the costly choice.
-    box.setDefaultButton(cancel)
-    box.setEscapeButton(cancel)
-    box.exec()
-    return box.clickedButton() is confirm
 
 
 class SettingsPage(QWidget):

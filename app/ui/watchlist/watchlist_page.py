@@ -40,9 +40,9 @@ from app.ui.components import (
     Sparkline,
     StatusBadge,
     SubtleButton,
+    clear_layout,
 )
 from app.ui.components.badge import severity_for_watch_status
-from app.ui.components.common import clear_layout
 from app.ui.theme import StatusSeverity, font_body, font_title
 
 logger = logging.getLogger("app.ui.watchlist")

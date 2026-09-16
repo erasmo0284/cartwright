@@ -82,7 +82,17 @@ class AppContext(QObject):
         self.database = Database(
             self.paths.database_file, backups_dir=self.paths.backups_dir
         )
-        self.database.migrate()
+        try:
+            self.database.migrate()
+        except Exception:
+            # Close before the failure escapes. The caller's response to a
+            # database it cannot open is to move the file aside and restore a
+            # backup, and on Windows an open SQLite handle can prevent that.
+            # A file so damaged that the PRAGMAs failed is already closed by
+            # ``Database.connection``; this covers the rest -- a migration
+            # that fails on an otherwise healthy, and therefore open, file.
+            self.database.close_all()
+            raise
 
         self.repositories = Repositories(
             products=ProductRepository(self.database),

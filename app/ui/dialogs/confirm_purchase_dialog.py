@@ -126,7 +126,7 @@ class ConfirmPurchaseDialog(QDialog):
 
         row = 0
         quantity = sum(
-            line.quantity for line in checkout.lines_for(self._review.rules.expected_asin)
+            line.units for line in checkout.lines_for(self._review.rules.expected_asin)
         ) or self._review.rules.quantity
         for label, value in (
             ("Quantity", str(quantity)),

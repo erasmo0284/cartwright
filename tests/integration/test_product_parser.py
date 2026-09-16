@@ -209,6 +209,63 @@ class TestSubscribeAndSave:
         snapshot = PARSER.parse(reader)
         assert snapshot.subscription_preselected is False
 
+    def test_a_renamed_accordion_row_is_still_treated_as_a_subscription(
+        self, load
+    ) -> None:
+        """The ids are Amazon's and they change; the wording is the backstop.
+
+        Relying on the row ids alone meant a renamed Subscribe & Save row
+        read as "one-time purchase" and the guard's subscription check
+        passed -- an unwanted recurring order.
+        """
+        reader = load(
+            PRODUCT_URL,
+            pages.product_page(
+                subscribe_and_save=True,
+                subscribe_preselected=True,
+                rename_subscription_ids=True,
+            ),
+        )
+        snapshot = PARSER.parse(reader)
+        assert snapshot.subscription_preselected is True
+
+    def test_a_renamed_row_is_flagged_even_when_one_time_looks_selected(
+        self, load
+    ) -> None:
+        """Being unable to confirm is reported as a subscription, not as a no.
+
+        With the one-time row renamed too, nothing on the page can be shown
+        to be the active option, so the only safe answer is "subscription".
+        """
+        reader = load(
+            PRODUCT_URL,
+            pages.product_page(
+                subscribe_and_save=True,
+                subscribe_preselected=False,
+                rename_subscription_ids=True,
+            ),
+        )
+        snapshot = PARSER.parse(reader)
+        assert snapshot.subscription_preselected is True
+
+    def test_a_recommendation_strip_mentioning_the_words_is_not_a_subscription(
+        self, load
+    ) -> None:
+        """The wording check is scoped to the buy box for a reason.
+
+        "Subscribe & Save" appears in recommendation strips on pages with no
+        subscription option at all. Treating those as subscriptions would
+        block ordinary purchases.
+        """
+        page = pages.product_page(subscribe_and_save=False).replace(
+            "</body>",
+            '<div id="similarities_feature_div">Subscribe &amp; Save on '
+            "related items and deliver every 2 months</div></body>",
+        )
+        reader = load(PRODUCT_URL, page)
+        snapshot = PARSER.parse(reader)
+        assert snapshot.subscription_preselected is False
+
 
 class TestPageClassification:
     def test_product_page(self, load) -> None:

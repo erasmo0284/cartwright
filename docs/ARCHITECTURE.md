@@ -67,7 +67,11 @@ Four rules govern it:
 
 It runs in three phases — `PRE_CART`, `PRE_CHECKOUT`, `PRE_SUBMIT` — because
 more becomes knowable as the flow progresses, and the last phase sees the
-real order total.
+real order total. `PRE_CHECKOUT` is the cart route only: it runs after the
+item has been added and before the checkout is entered, which is the last
+point at which stopping costs nothing. The Buy Now route has no cart to
+check, so it goes from `PRE_CART` to `PRE_SUBMIT`. Every report is persisted
+per phase, so the Activity screen can show which phase refused.
 
 **Assisted and automatic purchases call the same function with the same
 rules.** There is no second, weaker path for automatic mode. This is the most
@@ -116,13 +120,21 @@ mode that actually costs money.
    knows an order may exist. Recording afterwards would lose exactly the case
    that matters.
 5. **Startup recovery.** Any job left in `SUBMITTING` or `CONFIRMING` becomes
-   `UNKNOWN`, never resumed.
+   `UNKNOWN`, never resumed. So does any job whose attempt was recorded as
+   submitted, whatever state the row was left in: `FAILED` would say nothing
+   was ordered and would free the product's slot, which is the one route from
+   a crash to a second order.
 
 `SubmitAuthorization` ties it together: the only way to reach the click is to
 hand the checkout manager an object carrying the approved total, proof the
 guard passed, and that test mode is off. It re-validates all of them, re-reads
 the checkout, compares the total, and only then calls `record_submission()`
 and clicks.
+
+Test mode is read **at the moment of submission**, from the live settings,
+not from the value frozen when the purchase started. Switching it on while
+a confirmation is on screen means "do not order", and that instruction wins:
+the cart is restored and the job ends as `CANCELLED`.
 
 ## Cart isolation
 
@@ -172,6 +184,14 @@ SQLite is reached from several threads via a connection per thread, WAL mode
 and a process-wide write lock. Contention is negligible (one browser
 operation at a time), and serialising writes removes any chance of a lost
 update on purchase state.
+
+**Every SQL statement in the program lives under `app/database/`** -- in a
+migration, a repository, or `Database` itself. Nothing else composes a query,
+including the diagnostics report, which asks `Database` for its row counts
+rather than introspecting the schema itself. Both claims -- this one and the
+selectors one below -- are asserted by static scans in
+`tests/unit/test_architecture_review.py`, because a layering rule that is only
+written down is a layering rule that drifts.
 
 ## Selectors and page classification
 

@@ -52,6 +52,7 @@ from app.database.repositories import (
     WatchRepository,
 )
 from app.purchasing.models import (
+    CartState,
     CartStrategy,
     CheckoutSnapshot,
     ProductSnapshot,
@@ -106,6 +107,18 @@ class TestRunResult:
     @property
     def headline(self) -> str:
         return "Test successful" if self.succeeded else "Test found a problem"
+
+
+class _CartBlocked(Exception):
+    """Raised inside the preparation to stop at the pre-checkout phase.
+
+    Carries the guard report so the purchase ends as ``BLOCKED`` with the
+    failed rule named, rather than as a generic failure.
+    """
+
+    def __init__(self, report: GuardReport) -> None:
+        super().__init__("The pre-checkout checks did not pass")
+        self.report = report
 
 
 @dataclass(frozen=True)
@@ -166,6 +179,12 @@ class PurchaseService(QObject):
         #: Reviews awaiting a human decision, keyed by purchase job id.
         self._pending: dict[int, PurchaseReview] = {}
         self._tasks: dict[int, int] = {}
+        #: Jobs whose outcome this service has already recorded. A task that
+        #: handles its own error and then re-raises would otherwise be handled
+        #: a second time by ``_on_failed`` when the worker reports the same
+        #: error -- which previously overwrote NEEDS_USER with FAILED and made
+        #: the uncertain-order dialog appear twice.
+        self._reported: set[int] = set()
 
         worker.progress.connect(self._on_progress)
         worker.failed.connect(self._on_failed)
@@ -321,16 +340,28 @@ class PurchaseService(QObject):
             self._purchases.set_cart_strategy(job_id, plan.strategy)
 
             self._transition(job_id, PurchaseState.CART_PREPARATION)
-            prepared = ADAPTER.prepare_purchase(
-                session,
-                rules=rules,
-                plan=plan,
-                marketplace=product.marketplace,
-                journal=journal,
-                on_journal_change=lambda current: self._purchases.set_isolation_journal(
-                    job_id, current.to_json()
-                ),
-            )
+            try:
+                prepared = ADAPTER.prepare_purchase(
+                    session,
+                    rules=rules,
+                    plan=plan,
+                    marketplace=product.marketplace,
+                    journal=journal,
+                    on_journal_change=(
+                        lambda current: self._purchases.set_isolation_journal(
+                            job_id, current.to_json()
+                        )
+                    ),
+                    on_cart_read=lambda cart_product, cart_state: self._guard_cart(
+                        job_id, rules, cart_product, cart_state
+                    ),
+                )
+            except _CartBlocked as blocked:
+                # Stopped before the checkout was entered, so the cart is put
+                # back exactly as it was found.
+                ADAPTER.restore_cart(session, journal)
+                self._block(job_id, product, blocked.report)
+                return
             journal = prepared.journal
 
             self._transition(job_id, PurchaseState.CHECKOUT)
@@ -384,12 +415,16 @@ class PurchaseService(QObject):
             self._submit(session, review, journal)
 
         except AppError as error:
+            # ``_handle_preparation_error`` records the outcome and marks the
+            # job as reported, so the worker re-emitting the same error does
+            # not decide it a second time.
             self._handle_preparation_error(session, job_id, product, error, journal)
             raise
-        except Exception:
+        except BaseException:
             # The worker wraps and reports this; the job is failed here so it
-            # does not linger in a live state.
+            # does not linger in a live state and block the product forever.
             self._fail(job_id, AppError(ErrorCode.INTERNAL_ERROR))
+            self._reported.add(job_id)
             self._safe_restore(session, journal)
             raise
 
@@ -524,13 +559,52 @@ class PurchaseService(QObject):
             self._block(job_id, review.product, recheck)
             return
 
+        # Test mode is read live, not taken from the job. A user who switches
+        # it on while the confirmation dialog is open has said "do not
+        # order", and their latest instruction must win over the value frozen
+        # when the purchase started.
+        job_now = self._purchases.get(job_id)
+        test_mode_now = self._settings.current.test_mode or bool(
+            job_now.test_mode if job_now is not None else False
+        )
+        if test_mode_now:
+            logger.warning(
+                "Test mode is on at the moment of submission; nothing ordered",
+                extra={"purchase_job_id": job_id},
+            )
+            ADAPTER.restore_cart(session, journal)
+            self._transition(
+                job_id,
+                PurchaseState.CANCELLED,
+                reason="test mode was switched on before submission",
+                outcome_code="test_mode",
+                outcome_detail=(
+                    "Test Mode was on when this order was about to be placed, "
+                    "so nothing was ordered."
+                ),
+            )
+            self._activity.add(
+                category=ActivityCategory.PURCHASE,
+                severity=ActivitySeverity.WARNING,
+                title=f"Not ordered in Test Mode: {review.product.display_title}",
+                detail=(
+                    "Test Mode was switched on while this purchase was waiting "
+                    "for confirmation, so no order was placed."
+                ),
+                product_id=review.product.id,
+                purchase_job_id=job_id,
+            )
+            self._reported.add(job_id)
+            self.purchase_cancelled.emit(job_id)
+            return
+
         attempt = self._purchases.begin_attempt(job_id)
         authorization = SubmitAuthorization(
             purchase_job_id=job_id,
             attempt_id=attempt.id,
             approved_total=approved_total,
             guard_passed=True,
-            test_mode=False,
+            test_mode=test_mode_now,
             record_submission=lambda: self._purchases.mark_submitted(attempt),
         )
 
@@ -636,13 +710,23 @@ class PurchaseService(QObject):
     # ---- uncertain outcomes ---------------------------------------------
 
     def _mark_uncertain(
-        self, job_id: int, product: ProductRecord, detail: str | None
+        self, job_id: int, product: ProductRecord | None, detail: str | None
     ) -> None:
         """Record that an order may exist, and stop.
 
         No retry, ever. The only way out is :meth:`resolve_uncertain`, driven
         by what the user finds in their Amazon orders.
+
+        Idempotent: asking twice must not raise the question with the user
+        twice, because the dialog it drives is modal and alarming.
         """
+        existing = self._purchases.get(job_id)
+        if existing is not None and existing.state is PurchaseState.UNKNOWN:
+            logger.debug(
+                "This purchase is already recorded as uncertain",
+                extra={"purchase_job_id": job_id},
+            )
+            return
         self._purchases.transition(
             job_id,
             PurchaseState.UNKNOWN,
@@ -655,15 +739,19 @@ class PurchaseService(QObject):
             ),
         )
         self.state_changed.emit(job_id, PurchaseState.UNKNOWN.value)
+        # The product row may be gone (deleted watch, pruned orphan). Losing
+        # the name must not stop the user being asked, because an unresolved
+        # purchase blocks that product for good.
+        name = product.display_title if product is not None else "your item"
         self._activity.add(
             category=ActivityCategory.PURCHASE,
             severity=ActivitySeverity.ERROR,
-            title=f"Order result uncertain: {product.display_title}",
+            title=f"Order result uncertain: {name}",
             detail=(
                 "Check your Amazon orders, then tell the app whether the order "
                 "was placed."
             ),
-            product_id=product.id,
+            product_id=product.id if product is not None else None,
             purchase_job_id=job_id,
             error_code=ErrorCode.ORDER_RESULT_UNCERTAIN.value,
         )
@@ -767,6 +855,32 @@ class PurchaseService(QObject):
         )
         self.state_changed.emit(job_id, state.value)
 
+    def _guard_cart(
+        self,
+        job_id: int,
+        rules: PurchaseRules,
+        product: ProductSnapshot,
+        cart: CartState,
+    ) -> None:
+        """Run the pre-checkout guard phase and refuse to continue if it fails.
+
+        This is the phase that catches an unrelated line, or a quantity the
+        page changed, while the item is still only in a cart -- the last point
+        at which stopping costs nothing.
+        """
+        report = GUARD.check_cart(rules, product, cart)
+        self._purchases.save_guard_report(job_id, report)
+        if report.passed:
+            return
+        logger.warning(
+            "The pre-checkout checks did not pass",
+            extra={
+                "purchase_job_id": job_id,
+                "failed": [check.title for check in report.blocking_failures[:5]],
+            },
+        )
+        raise _CartBlocked(report)
+
     def _block(
         self, job_id: int, product: ProductRecord, report: GuardReport
     ) -> None:
@@ -855,11 +969,19 @@ class PurchaseService(QObject):
         self,
         session: BrowserSession,
         job_id: int,
-        product: ProductRecord,
+        product: ProductRecord | None,
         error: AppError,
         journal: IsolationJournal,
     ) -> None:
-        """Record a failure during preparation, and undo any cart changes."""
+        """Record a failure during preparation, and undo any cart changes.
+
+        Marks the job as reported before returning. The caller re-raises so
+        the worker logs the error, and the worker then emits ``failed`` for
+        the same job; without this mark the outcome would be decided twice,
+        which previously overwrote ``NEEDS_USER`` with ``FAILED`` and raised
+        the uncertain-order dialog twice.
+        """
+        self._reported.add(job_id)
         job = self._purchases.get(job_id)
         if job is not None and job.state.order_may_exist:
             self._mark_uncertain(job_id, product, error.detail)
@@ -885,9 +1007,13 @@ class PurchaseService(QObject):
         self._activity.add(
             category=ActivityCategory.ERROR if not error.needs_user else ActivityCategory.WARNING,
             severity=ActivitySeverity.ERROR if not error.needs_user else ActivitySeverity.WARNING,
-            title=f"Purchase stopped: {product.display_title}",
+            title=(
+                f"Purchase stopped: {product.display_title}"
+                if product is not None
+                else "Purchase stopped"
+            ),
             detail=error.detail,
-            product_id=product.id,
+            product_id=product.id if product is not None else None,
             purchase_job_id=job_id,
             error_code=error.code.value,
         )
@@ -952,6 +1078,10 @@ class PurchaseService(QObject):
             return
         self._tasks.pop(job_id, None)
         self._pending.pop(job_id, None)
+        if job_id in self._reported:
+            # The task already decided and recorded this outcome.
+            self._reported.discard(job_id)
+            return
         self._fail(job_id, error)
 
     def _on_cancelled(self, task_id: int, context: object) -> None:

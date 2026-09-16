@@ -259,7 +259,16 @@ def is_amazon_retail(seller: str | None) -> bool:
     Exact match against :data:`AMAZON_RETAIL_SELLERS`. A substring test is
     deliberately not used: ``"Amazon.com Deals"`` and ``"AmazonBasics Store"``
     are third-party sellers and must not qualify.
+
+    Non-ASCII letters are refused outright. :func:`normalise_label` applies
+    NFKD, which folds mathematical-bold and fullwidth characters onto plain
+    ASCII, so a storefront literally named with lookalike glyphs would
+    otherwise normalise to ``amazon.com`` and satisfy an "Amazon only" rule
+    exactly. Amazon's own retail names contain no such characters, so
+    refusing them costs nothing.
     """
+    if seller and any(ord(character) > 127 for character in seller):
+        return False
     return normalise_label(seller) in AMAZON_RETAIL_SELLERS
 
 
@@ -437,9 +446,14 @@ class PurchaseRules:
             brand = normalise_label(self.brand)
             if not brand:
                 return False
-            # "Sony" vs "Sony Electronics" / "Sony Store": accept a seller name
-            # that begins with the brand, which is how brand storefronts read.
-            return normalised == brand or normalised.startswith(f"{brand} ")
+            # Brand storefronts read as the brand, or the brand followed by
+            # one of a known set of storefront words. A bare prefix match
+            # would accept "Klein Tools Discount Warehouse", which is a
+            # different seller with different returns and stock.
+            if normalised == brand:
+                return True
+            suffixes = ("store", "official", "official store", "direct", "us", "usa")
+            return any(normalised == f"{brand} {suffix}" for suffix in suffixes)
         if self.seller_policy is SellerPolicy.APPROVED_LIST:
             approved = {normalise_label(name) for name in self.approved_sellers}
             approved.discard("")
@@ -457,11 +471,17 @@ class PurchaseRules:
 
 @dataclass(frozen=True)
 class CartLine:
-    """One line item in the Amazon cart."""
+    """One line item in the Amazon cart or the checkout.
+
+    ``quantity`` is ``None`` when no quantity control could be read. That is
+    deliberately distinct from ``1``: defaulting an unreadable quantity to
+    one would let the guard validate a fabricated value and report PASS,
+    which is how someone ends up buying three of something.
+    """
 
     asin: str | None
     title: str | None
-    quantity: int
+    quantity: int | None
     unit_price: Money | None = None
     line_price: Money | None = None
     row_id: str | None = None
@@ -471,6 +491,15 @@ class CartLine:
     def display_title(self) -> str:
         return self.title or (f"Item {self.asin}" if self.asin else "Unnamed item")
 
+    @property
+    def units(self) -> int:
+        """The quantity for arithmetic, treating unknown as zero.
+
+        Never use this to decide whether a quantity rule is satisfied -- check
+        ``quantity is None`` for that.
+        """
+        return self.quantity or 0
+
 
 @dataclass(frozen=True)
 class CartState:
@@ -478,7 +507,9 @@ class CartState:
 
     lines: tuple[CartLine, ...] = ()
     subtotal: Money | None = None
-    saved_for_later_count: int = 0
+    #: ``None`` when the saved-for-later section could not be read, which
+    #: is not the same answer as "nothing is saved there".
+    saved_for_later_count: int | None = 0
     #: True when Amazon showed its explicit "your cart is empty" message.
     reported_empty: bool = False
 
@@ -488,7 +519,7 @@ class CartState:
 
     @property
     def total_units(self) -> int:
-        return sum(line.quantity for line in self.lines)
+        return sum(line.units for line in self.lines)
 
     def lines_for(self, asin: str) -> tuple[CartLine, ...]:
         wanted = asin.strip().upper()
@@ -534,7 +565,7 @@ class CheckoutSnapshot:
 
     @property
     def total_units(self) -> int:
-        return sum(line.quantity for line in self.lines)
+        return sum(line.units for line in self.lines)
 
     def lines_for(self, asin: str) -> tuple[CartLine, ...]:
         wanted = asin.strip().upper()

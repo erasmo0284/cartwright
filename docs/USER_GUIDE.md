@@ -50,6 +50,10 @@ button — and then stop without clicking it. Nothing can be bought.
 Leave it on until you have run at least one test and are happy with what you
 see.
 
+Test Mode also works as a stop button. If a confirmation is on screen and you
+switch Test Mode on in Settings before pressing the button, the app checks the
+setting again at the last moment, puts your cart back and orders nothing.
+
 ### 3. Check a product
 
 Go to **New Purchase**, paste an Amazon product link, and click **Check
@@ -228,6 +232,11 @@ You will be asked to:
 
 Until you answer, that product cannot be purchased again. That is deliberate.
 
+The same question is asked if the app or the PC stops while an order is being
+placed. On the next start it finds the interrupted purchase, says it cannot
+tell whether Amazon accepted it, and asks you the same three things. It never
+retries by itself.
+
 ---
 
 ## Your cart
@@ -326,6 +335,13 @@ when you set it.
 **Notifications do not appear**
 Settings → Notifications → **Send a test notification**. It will tell you
 which channel it is using and what went wrong.
+
+**"The app could not save its data" when starting**
+The app's own database file is damaged or unreadable — usually after a power
+cut or a disk problem. It keeps rolling backups, so it offers to restore the
+most recent one and start. Anything recorded after that backup is lost, and
+the damaged file is kept beside it (with a `.damaged` name) rather than
+deleted. Your Amazon account and your real orders are not affected.
 
 ---
 

@@ -29,6 +29,13 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # Imported for typing only: the runtime import order in
+    # ``main`` is deliberate and must not be disturbed by a module-level one.
+    from app.core.errors import AppError
+    from app.paths import AppPaths
+    from app.ui.app_context import AppContext
 
 # --------------------------------------------------------------------------
 # Step 1: crash capture, before any other import that could fail.
@@ -173,6 +180,90 @@ def _parse_arguments(argv: list[str]) -> argparse.Namespace:
 # --------------------------------------------------------------------------
 
 
+def _offer_database_recovery(
+    paths: "AppPaths", error: "AppError"
+) -> "AppContext | None":
+    """Report a failed start, and offer a backup when the data is at fault.
+
+    A damaged or unreadable database is the one startup failure the user can
+    actually fix, and the app keeps rolling backups for exactly this case.
+    Returns a started context, or ``None`` when the app cannot continue.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    from app.branding import BRAND
+    from app.core.errors import AppError, ErrorCode
+    from app.database.database import restore_backup
+    from app.ui.app_context import AppContext
+
+    logger = logging.getLogger("app.main")
+    title = f"{BRAND.display_name} cannot start"
+    is_database = isinstance(error, AppError) and error.code is ErrorCode.DATABASE_ERROR
+    backups = (
+        sorted(
+            paths.backups_dir.glob("app-*.db"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if is_database and paths.backups_dir.exists()
+        else []
+    )
+
+    detail = getattr(error, "detail", str(error))
+    if not backups:
+        QMessageBox.critical(
+            None, title, f"{getattr(error, 'title', 'Startup failed')}\n\n{detail}"
+        )
+        return None
+
+    newest = backups[0]
+    answer = QMessageBox.question(
+        None,
+        title,
+        f"{detail}\n\n"
+        f"A backup from {_file_stamp(newest)} is available. Restore it and "
+        "start?\n\nAnything recorded after that backup will be lost. Your "
+        "Amazon account and your real orders are not affected.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    if answer != QMessageBox.StandardButton.Yes:
+        return None
+
+    try:
+        # The damaged file is kept, not deleted: it is the only copy of
+        # whatever was written after the backup.
+        damaged = paths.database_file.with_name(paths.database_file.name + ".damaged")
+        damaged.unlink(missing_ok=True)
+        paths.database_file.replace(damaged)
+        restore_backup(newest, paths.database_file)
+        logger.warning(
+            "Restored the database from a backup",
+            extra={"backup": newest.name},
+        )
+        return AppContext(paths=paths)
+    except (AppError, OSError) as second:
+        logger.error("Recovery from a backup failed", exc_info=second)
+        QMessageBox.critical(
+            None,
+            title,
+            "Restoring the backup did not work either.\n\n"
+            f"{getattr(second, 'detail', str(second))}",
+        )
+        return None
+
+
+def _file_stamp(path: Path) -> str:
+    """A plain-English timestamp for a file, for use in a dialog."""
+    from datetime import datetime
+
+    try:
+        moment = datetime.fromtimestamp(path.stat().st_mtime)
+    except OSError:  # pragma: no cover - the file was just listed
+        return "an earlier session"
+    return moment.strftime("%d %b %Y at %H:%M")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the application. Returns the process exit code."""
     arguments = _parse_arguments(list(argv if argv is not None else sys.argv[1:]))
@@ -273,10 +364,9 @@ def main(argv: list[str] | None = None) -> int:
         context = AppContext(paths=paths)
     except AppError as error:
         logger.error("Could not start", exc_info=error)
-        QMessageBox.critical(
-            None, f"{BRAND.display_name} cannot start", f"{error.title}\n\n{error.detail}"
-        )
-        return 1
+        context = _offer_database_recovery(paths, error)
+        if context is None:
+            return 1
 
     from app.config import ThemePreference
     from app.ui.main_window import MainWindow

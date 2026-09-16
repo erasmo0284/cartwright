@@ -152,16 +152,37 @@ class CartManager:
         "your cart is empty" message is a stronger signal than an absence of
         parsed rows, which could equally mean the selectors failed.
         """
+        # "Empty" is only believed when no line rows exist. Reporting an
+        # empty cart that in fact holds items is the single reading that
+        # could let an unrelated item be checked out, so the rows are counted
+        # before the wording is trusted.
         page_text = normalise_label(reader.page_text(limit=40_000)) or ""
-        reported_empty = any(
-            phrase in page_text for phrase in selectors.CART_EMPTY_TEXT
-        ) or reader.exists(selectors.CART_EMPTY_MARKERS)
-
-        if reported_empty:
-            logger.info("Cart is empty")
-            return CartState(lines=(), subtotal=None, reported_empty=True)
+        says_empty = any(phrase in page_text for phrase in selectors.CART_EMPTY_TEXT)
+        shows_empty = reader.exists(
+            selectors.CART_EMPTY_MARKERS, visible_only=True
+        )
 
         container, resolution = reader.find(selectors.CART_ACTIVE_CONTAINER)
+        line_count = 0
+        if container is not None:
+            try:
+                line_count = int(container.locator(selectors.CART_LINE_ITEMS).count())
+            except Exception:  # noqa: BLE001
+                line_count = 0
+
+        if (says_empty or shows_empty) and line_count == 0:
+            logger.info(
+                "Cart is empty",
+                extra={"visible_marker": shows_empty, "wording": says_empty},
+            )
+            return CartState(lines=(), subtotal=None, reported_empty=True)
+
+        if says_empty and line_count:
+            logger.warning(
+                "The cart claimed to be empty but has line items; parsing them",
+                extra={"lines": line_count},
+            )
+
         if container is None:
             raise AppError(
                 ErrorCode.UNEXPECTED_PAGE,
@@ -185,7 +206,7 @@ class CartManager:
             "Cart read",
             extra={
                 "lines": len(lines),
-                "units": sum(line.quantity for line in lines),
+                "units": sum(line.units for line in lines),
                 "subtotal_cents": subtotal.cents if subtotal else None,
                 "saved_for_later": saved_count,
             },
@@ -214,7 +235,11 @@ class CartManager:
             title = self._row_text(row, selectors.CART_ITEM_TITLE)
             price_text = self._row_text(row, selectors.CART_ITEM_PRICE)
             seller_text = self._row_text(row, selectors.CART_ITEM_SELLER)
-            quantity = self._row_quantity(row)
+            try:
+                row_text = clean(row.text_content(timeout=1_500)) or ""
+            except Exception:  # noqa: BLE001
+                row_text = ""
+            quantity = self._row_quantity(row, row_text)
             row_id = self._row_id(row)
 
             unit_price = parse_money_ceiling(price_text)
@@ -224,7 +249,11 @@ class CartManager:
                     title=title,
                     quantity=quantity,
                     unit_price=unit_price,
-                    line_price=unit_price * quantity if unit_price else None,
+                    line_price=(
+                        unit_price * quantity
+                        if unit_price is not None and quantity is not None
+                        else None
+                    ),
                     row_id=row_id,
                     seller=self._clean_seller(seller_text),
                 )
@@ -253,23 +282,39 @@ class CartManager:
         return clean(cleaned)
 
     @staticmethod
-    def _row_quantity(row: Any) -> int:
-        """The line's quantity.
+    def _row_quantity(row: Any, text: str | None = None) -> int | None:
+        """The line's quantity, or ``None`` when it could not be read.
 
-        Defaults to 1 only when no quantity control is present at all. A
-        control that is present but unreadable returns 1 as well, and the
-        guard's quantity check then compares it against the expectation, so
-        an unreadable quantity blocks rather than passing silently.
+        Never 1 by default. This used to return 1 whenever the control was
+        missing or unreadable, on the reasoning that the guard would then
+        compare it against the expectation -- which is true only when the
+        user asked for a different number. For the common rule "quantity 1",
+        a fabricated 1 is reported as a PASS on a number nobody observed.
+        ``None`` fails the check instead, which is the same contract the
+        checkout reader follows.
+
+        The form control is tried first, then the wording, because Amazon
+        renders the compact cart with "Qty: 2" as text and no control.
         """
+        raw = ""
         try:
             control = row.locator(selectors.CART_ITEM_QUANTITY_INPUT).first
-            if control.count() == 0:
-                return 1
-            raw = control.input_value(timeout=1_500)
+            if control.count() > 0:
+                raw = (control.input_value(timeout=1_500) or "").strip()
         except Exception:  # noqa: BLE001
-            return 1
-        cleaned = (raw or "").strip()
-        return int(cleaned) if cleaned.isdigit() and int(cleaned) > 0 else 1
+            raw = ""
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+
+        for pattern in selectors.CHECKOUT_QUANTITY_PATTERNS:
+            match = pattern.search(text or "")
+            if match:
+                value = int(match.group(1))
+                if value > 0:
+                    return value
+
+        logger.warning("A cart line had no readable quantity")
+        return None
 
     @staticmethod
     def _row_id(row: Any) -> str | None:
@@ -280,14 +325,23 @@ class CartManager:
         return raw.removeprefix("sc-active-") or None
 
     @staticmethod
-    def _count_saved(reader: PageReader) -> int:
+    def _count_saved(reader: PageReader) -> int | None:
+        """How many items are saved for later, or ``None`` if unreadable.
+
+        ``0`` and "could not be read" are different answers: the restore
+        step reports how many of the user's own items were put back, and
+        saying "none were saved" when the section could not be read would
+        make a failed restore look like nothing to restore.
+        """
         container, _ = reader.find(selectors.SAVED_FOR_LATER_CONTAINER)
         if container is None:
+            # No section at all is a real answer: nothing is saved.
             return 0
         try:
-            return int(container.locator(".sc-list-item").count())
+            return int(container.locator(selectors.SAVED_FOR_LATER_ITEMS).count())
         except Exception:  # noqa: BLE001
-            return 0
+            logger.warning("Could not count the saved-for-later items")
+            return None
 
     # ---- planning --------------------------------------------------------
 
@@ -500,7 +554,7 @@ class CartManager:
                 break
             moved_any = False
             try:
-                rows = container.locator(".sc-list-item")
+                rows = container.locator(selectors.SAVED_FOR_LATER_ITEMS)
                 total = rows.count()
             except Exception:  # noqa: BLE001
                 break
@@ -556,9 +610,7 @@ class CartManager:
             return False
         try:
             if line.asin:
-                row = container.locator(
-                    f"{selectors.CART_LINE_ITEMS}[data-asin='{line.asin}']"
-                ).first
+                row = container.locator(selectors.cart_line_for(line.asin)).first
             else:
                 row = container.locator(selectors.CART_LINE_ITEMS).first
             if row.count() == 0:

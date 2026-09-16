@@ -221,6 +221,7 @@ def product_page(
     include_offscreen_price: bool = True,
     subscribe_and_save: bool = False,
     subscribe_preselected: bool = False,
+    rename_subscription_ids: bool = False,
     buy_now: bool = True,
     add_to_cart: bool = True,
     signed_in: bool = True,
@@ -241,12 +242,17 @@ def product_page(
     if subscribe_and_save:
         sns_selected = "a-accordion-active" if subscribe_preselected else ""
         one_time_selected = "" if subscribe_preselected else "a-accordion-active"
+        # ``rename_subscription_ids`` models the case the selectors cannot
+        # cover: Amazon renames the accordion rows, so every id-based chain
+        # misses while the page still offers a recurring delivery.
+        sns_id = "snsRowRenamed2027" if rename_subscription_ids else "snsAccordionRowMiddle"
+        one_time_id = "oneTimeBoxRenamed2027" if rename_subscription_ids else "oneTimeBuyBox"
         sns_block = f"""
         <div id="buyBoxAccordion" class="a-accordion">
-          <div id="snsAccordionRowMiddle" class="a-accordion-row {sns_selected}">
+          <div id="{sns_id}" class="a-accordion-row {sns_selected}">
             <a class="a-accordion-row-a11y" href="#">Subscribe &amp; Save</a>
           </div>
-          <div id="oneTimeBuyBox" class="a-accordion-row {one_time_selected}">
+          <div id="{one_time_id}" class="a-accordion-row {one_time_selected}">
             <a class="a-accordion-row-a11y" href="#">One-time purchase</a>
             <input type="radio" name="purchase-type" value="one-time"
                    {"" if subscribe_preselected else "checked"}>

@@ -508,5 +508,6 @@ def rules_from_row(row: sqlite3.Row) -> PurchaseRules:
         allow_addons=bool(row["allow_addons"]),
         allow_subscription=bool(row["allow_subscription"]),
         require_prime=bool(row["require_prime"]),
+        brand=row["brand"],
         rules_id=int(row["id"]),
     )
