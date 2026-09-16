@@ -25,7 +25,7 @@ from app.database.database import Database
 from app.database.records import PurchaseJobRecord
 from app.purchasing.models import CartStrategy, PurchaseMode
 from app.purchasing.states import (
-    SUBMIT_ENTRY_STATES,
+    SUBMIT_RECORD_STATES,
     IllegalTransition,
     PurchaseState,
     assert_transition,
@@ -360,7 +360,7 @@ class PurchaseRepository:
         job = self.get(attempt.purchase_job_id)
         if job is None:
             raise KeyError(f"No purchase job with id {attempt.purchase_job_id}")
-        if job.state not in SUBMIT_ENTRY_STATES:
+        if job.state not in SUBMIT_RECORD_STATES:
             raise AppError(
                 ErrorCode.INTERNAL_ERROR,
                 context={

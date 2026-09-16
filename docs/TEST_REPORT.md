@@ -6,8 +6,8 @@ PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 ## Summary
 
 ```
-948 tests collected
-880 passed, 68 skipped in 109s
+995 tests collected
+927 passed, 68 skipped in 103s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -18,6 +18,7 @@ skipped for being broken or unfinished.
 | Area | Tests |
 |---|---|
 | Widget library | 93 |
+| Service orchestration (purchase and monitor) | 47 |
 | Theme, contrast, icons | 145 |
 | Logging contract (static scan) | 102 |
 | Notifications | 78 |
@@ -37,7 +38,7 @@ skipped for being broken or unfinished.
 | Activity and settings pages | 30 |
 | Security: logging and export (real browser) | 7 |
 
-27,591 lines of application code across 100 modules; 9,647 lines of tests.
+27,600 lines of application code across 100 modules; 10,400 lines of tests.
 
 ## How the risky things are tested
 
@@ -179,7 +180,27 @@ so the test cannot be satisfied by logging nothing.
    waited on a dialog nobody could click. Found by running the uninstall
    unattended. Fixed with `SuppressibleMsgBox` and re-verified.
 
-8. **A test asserted the wrong safety semantics.** A test expected that
+8. **Every real purchase would have failed at the moment of submission.**
+   The purchase service transitions a job to `SUBMITTING` *before* the click
+   (which is what lets crash recovery detect an interrupted submission), but
+   `PurchaseRepository.mark_submitted` only accepted the two pre-submit
+   states, so the very first thing the real submit path did was raise
+   "the app was not in a state where submitting is allowed". Nothing would
+   ever have been ordered.
+
+   This survived 880 tests because the integration tests exercise
+   `CheckoutManager.submit` with their *own* `record_submission` callback (a
+   list append), so the real repository call was never on the path. It was
+   caught within minutes of writing `tests/unit/test_services.py`, whose
+   whole purpose is to test the wiring rather than the parts. Fixed by adding
+   `SUBMIT_RECORD_STATES = SUBMIT_ENTRY_STATES | {SUBMITTING}`, which weakens
+   nothing because `SUBMITTING` is only reachable from those entry states in
+   the first place.
+
+   The lesson is recorded here deliberately: component tests with injected
+   doubles can all pass while the assembled system cannot do its job.
+
+9. **A test asserted the wrong safety semantics.** A test expected that
    turning the price *trigger* off would allow a purchase above the maximum
    item price. The code correctly refused. The test was wrong and is now
    replaced by one that documents the rule: a trigger decides *when*, a limit
@@ -207,12 +228,12 @@ Stated plainly, because it is the honest limit of this report.
 - **Sleep/wake has not been exercised on real hardware.** The clock-jump
   detector is tested with simulated clocks.
 - **High-DPI (125% / 150%) was not visually reviewed**, nor Windows 10.
-- **`MonitorService`, `PurchaseService` orchestration, `BrowserWorker`
-  queueing and `AppContext` startup have no direct unit tests.** Their parts
-  are tested (the guard, the watcher decisions, the repositories, the state
-  machine) and their integration was exercised by running the packaged
-  application, but the wiring itself is covered by observation rather than by
-  assertion.
+- **`BrowserWorker` queueing, priority and cancellation, and `AppContext`
+  startup, have no direct unit tests.** `PurchaseService` and
+  `MonitorService` now do (`tests/unit/test_services.py`, 47 tests, against a
+  fake worker that runs tasks synchronously). The worker's own threading and
+  the context's startup order were verified by running the packaged
+  application, which is observation rather than assertion.
 
 See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the full list.
 

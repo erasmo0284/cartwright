@@ -232,6 +232,17 @@ SUBMIT_ENTRY_STATES: Final[frozenset[PurchaseState]] = frozenset(
     {PurchaseState.FINAL_VALIDATION, PurchaseState.AWAITING_CONFIRMATION}
 )
 
+#: States in which recording a submission is legitimate.
+#:
+#: ``SUBMITTING`` is included because the service moves the job into it
+#: *before* the click -- that is what lets startup recovery see an
+#: interrupted submission. Allowing it weakens nothing: ``SUBMITTING`` is
+#: only reachable from :data:`SUBMIT_ENTRY_STATES` in the first place, so a
+#: job can only be here if it already passed through a legitimate entry.
+SUBMIT_RECORD_STATES: Final[frozenset[PurchaseState]] = (
+    SUBMIT_ENTRY_STATES | {PurchaseState.SUBMITTING}
+)
+
 
 class IllegalTransition(Exception):
     """Raised when code attempts a move the state machine forbids.
