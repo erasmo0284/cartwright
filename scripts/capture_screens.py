@@ -231,6 +231,26 @@ def _seed(context: object) -> None:
     )
 
 
+def _inspection(context: object) -> "object":
+    """A checked product, for the New Purchase page with its rules showing.
+
+    Built from the seeded database so the page renders exactly as it does
+    after a real "Check product": the summary card, the pre-filled rules and
+    the buttons that act on them.
+    """
+    from app.purchasing.product_service import Inspection, suggest_rules
+
+    snapshot = _review().snapshot
+    products = context.repositories.products  # type: ignore[attr-defined]
+    record = products.upsert_from_snapshot(snapshot)
+    rules = suggest_rules(
+        snapshot,
+        default_seller_policy=context.settings.current.default_seller_policy,  # type: ignore[attr-defined]
+        default_condition_policy=context.settings.current.default_condition_policy,  # type: ignore[attr-defined]
+    )
+    return Inspection(snapshot=snapshot, record=record, suggested_rules=rules)
+
+
 def _review() -> "object":
     """A believable purchase review, for the confirmation dialog."""
     from app.core.money import Money
@@ -432,6 +452,20 @@ def main(argv: list[str] | None = None) -> int:
             for _ in range(10):
                 application.processEvents()
             destination = output / f"{mode_name}-{index + 1}-{page}.png"
+            _grab(window, destination)
+            captured.append(destination)
+
+        # The rules editor, which is where a person decides what "buy it"
+        # means and is therefore the screen most worth looking at.
+        window._nav.setCurrentRow(1)  # noqa: SLF001
+        try:
+            window._purchase_page.show_inspection(_inspection(context))  # noqa: SLF001
+        except Exception as exc:  # noqa: BLE001 - a capture must not fail the run
+            print(f"  (could not render the rules editor: {exc})")
+        else:
+            for _ in range(10):
+                application.processEvents()
+            destination = output / f"{mode_name}-2b-purchase-rules.png"
             _grab(window, destination)
             captured.append(destination)
 
