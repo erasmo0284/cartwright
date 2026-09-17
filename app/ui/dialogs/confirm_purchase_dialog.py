@@ -15,13 +15,17 @@ Concretely:
 * The button is disabled outright unless the Purchase Guard passed and a
   total could be read.
 * The full PASS/FAIL table is on screen, not hidden behind a disclosure.
+* The dialog opens at the height its content needs, so the delivery address
+  and the payment method are not below the fold. See :meth:`sizeHint`.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Final
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
@@ -49,6 +53,21 @@ from app.ui.theme import StatusSeverity, font_body, font_metric, font_title
 
 logger = logging.getLogger("app.ui.dialogs.confirm")
 
+#: The most of the screen's usable height this dialog will take before it
+#: falls back to scrolling. Nine tenths keeps the window frame and a little of
+#: the desktop in view, so it still reads as a dialog over the application
+#: rather than as the whole display.
+_MAX_SCREEN_FRACTION: Final[float] = 0.9
+
+#: The smallest useful size. The height is deliberately well under the content
+#: height: on a small screen, or at 150% scaling, the dialog has to be allowed
+#: to shrink and scroll instead of growing past the bottom of the screen.
+_MIN_WIDTH: Final[int] = 560
+_MIN_HEIGHT: Final[int] = 460
+
+#: Qt's own maximum widget extent, used when there is no screen to measure.
+_MAX_DIALOG_HEIGHT: Final[int] = 16_777_215
+
 
 class ConfirmPurchaseDialog(QDialog):
     """Shows the prepared order and asks for one deliberate confirmation."""
@@ -59,7 +78,7 @@ class ConfirmPurchaseDialog(QDialog):
 
         self.setWindowTitle(f"Ready to purchase - {BRAND.display_name}")
         self.setModal(True)
-        self.setMinimumSize(560, 640)
+        self.setMinimumSize(_MIN_WIDTH, _MIN_HEIGHT)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -80,6 +99,7 @@ class ConfirmPurchaseDialog(QDialog):
         subtitle.setWordWrap(True)
         heading_layout.addWidget(subtitle)
         outer.addWidget(heading_wrapper)
+        self._heading_wrapper = heading_wrapper
 
         scroll = QScrollArea()
         scroll.setObjectName("ScrollAreaFlat")
@@ -101,8 +121,16 @@ class ConfirmPurchaseDialog(QDialog):
 
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
+        self._scroll = scroll
+        self._body = body
 
-        outer.addWidget(self._build_footer())
+        footer = self._build_footer()
+        outer.addWidget(footer)
+        self._footer = footer
+
+        # Open at the size the content asks for. Qt would otherwise use the
+        # minimum, which put the delivery card below the fold.
+        self.resize(self.sizeHint())
 
         logger.info(
             "Showing the purchase confirmation",
@@ -113,6 +141,61 @@ class ConfirmPurchaseDialog(QDialog):
                 "strategy": review.strategy.value,
             },
         )
+
+    # ---- sizing ----------------------------------------------------------
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        """The size at which nothing essential is hidden.
+
+        A :class:`QScrollArea` reports a small, fixed size hint of its own
+        rather than its content's, so a dialog built around one opens at its
+        minimum height and the last card ends up below the fold. On this
+        screen that card is "Where it goes and how it is paid" -- the delivery
+        address and the payment method -- which is precisely what a person has
+        to check before real money is spent.
+
+        The height asked for is therefore the content's own, capped at
+        :data:`_MAX_SCREEN_FRACTION` of the usable screen height. The scroll
+        area is kept for the case where the content genuinely does not fit: a
+        small screen, or a display at 150% scaling.
+        """
+        hint = super().sizeHint()
+        if not hasattr(self, "_footer"):
+            # Qt may ask while the dialog is still being built, before there
+            # is any content to measure.
+            return hint
+        width = max(hint.width(), self.minimumWidth())
+        return QSize(width, min(self._content_height(width), self._height_budget()))
+
+    def _content_height(self, width: int) -> int:
+        """The height that puts every card on screen at ``width``."""
+        layout = self._body.layout()
+        # Word-wrapped labels only know their height once they know their
+        # width, and the width they will get is the viewport's. It is measured
+        # as though a scrollbar were present, which is the narrower case: a
+        # line that wraps onto two is then allowed for rather than clipped.
+        frame = 2 * self._scroll.frameWidth()
+        bar = self._scroll.verticalScrollBar().sizeHint().width()
+        viewport = max(width - frame - bar, 1)
+        if layout is not None and layout.hasHeightForWidth():
+            content = layout.heightForWidth(viewport)
+        else:
+            content = self._body.sizeHint().height()
+        chrome = (
+            self._heading_wrapper.heightForWidth(width)
+            if self._heading_wrapper.hasHeightForWidth()
+            else self._heading_wrapper.sizeHint().height()
+        ) + self._footer.sizeHint().height()
+        return chrome + content + frame
+
+    def _height_budget(self) -> int:
+        """The tallest this dialog may open, given the screen it is on."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            # No screen to measure (offscreen rendering, or a test): the
+            # content's own height is then the only sensible answer.
+            return _MAX_DIALOG_HEIGHT
+        return int(screen.availableGeometry().height() * _MAX_SCREEN_FRACTION)
 
     # ---- sections --------------------------------------------------------
 

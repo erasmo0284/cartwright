@@ -1,1 +1,1 @@
-"""Amazon Purchase Bot application package."""
+"""Cartwright application package."""

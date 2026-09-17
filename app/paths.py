@@ -4,7 +4,7 @@ All mutable application state lives under a single per-user directory so that
 uninstalling the program never needs to touch anything else, and so a support
 request can be satisfied by looking in one place::
 
-    %LOCALAPPDATA%\AmazonPurchaseBot\
+    %LOCALAPPDATA%\Cartwright\
         data\app.db
         browser\amazon-profile\
         browser\playwright\
@@ -13,8 +13,8 @@ request can be satisfied by looking in one place::
         backups\
         config\
 
-The root can be redirected with the ``APB_DATA_DIR`` environment variable,
-which is what the test suite and the portable build use.
+The root can be redirected with the ``CARTWRIGHT_DATA_DIR`` environment
+variable, which is what the test suite and the portable build use.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from app.branding import BRAND
 
-DATA_DIR_ENV_VAR = "APB_DATA_DIR"
+DATA_DIR_ENV_VAR = "CARTWRIGHT_DATA_DIR"
 
 
 def is_frozen() -> bool:
@@ -170,5 +170,5 @@ def get_paths() -> AppPaths:
 
 
 def reset_paths_cache() -> None:
-    """Forget the cached root. Used by tests that relocate ``APB_DATA_DIR``."""
+    """Forget the cached root. Used by tests that relocate ``CARTWRIGHT_DATA_DIR``."""
     get_paths.cache_clear()

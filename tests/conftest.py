@@ -16,7 +16,7 @@ from app.paths import AppPaths, reset_paths_cache
 def app_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AppPaths]:
     """An isolated application data directory for a single test."""
     root = tmp_path / "AppData"
-    monkeypatch.setenv("APB_DATA_DIR", str(root))
+    monkeypatch.setenv("CARTWRIGHT_DATA_DIR", str(root))
     reset_paths_cache()
     paths = AppPaths(root=root).ensure()
     yield paths
@@ -39,6 +39,6 @@ def _no_real_user_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     Without this, a missing fixture silently writes into the developer's (or a
     user's) live data directory.
     """
-    if "APB_DATA_DIR" not in os.environ:
-        monkeypatch.setenv("APB_DATA_DIR", str(tmp_path / "guard"))
+    if "CARTWRIGHT_DATA_DIR" not in os.environ:
+        monkeypatch.setenv("CARTWRIGHT_DATA_DIR", str(tmp_path / "guard"))
         reset_paths_cache()

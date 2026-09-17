@@ -235,7 +235,7 @@ puts a raw exception message on screen.
 
 ## Data
 
-Everything lives under `%LOCALAPPDATA%\AmazonPurchaseBot\`:
+Everything lives under `%LOCALAPPDATA%\Cartwright\`:
 
 ```
 data/app.db                 SQLite, WAL

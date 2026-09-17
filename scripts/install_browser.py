@@ -4,7 +4,7 @@ The app does this by itself on first run; this script exists so a developer
 or a build machine can do it ahead of time, and so the integration tests have
 something to run against.
 
-It deliberately installs into ``%LOCALAPPDATA%\\AmazonPurchaseBot\\browser\\
+It deliberately installs into ``%LOCALAPPDATA%\\Cartwright\\browser\\
 playwright`` rather than Playwright's default location or the package
 directory. Installing into the package directory
 (``PLAYWRIGHT_BROWSERS_PATH=0``) would cause PyInstaller to bundle ~430 MB of

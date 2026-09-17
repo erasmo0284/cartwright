@@ -1,0 +1,44 @@
+# The fast half of the suite, on every push and pull request.
+#
+# Unit tests only, deliberately. The integration tests drive a real Chromium
+# against local fixture pages, which means downloading a browser on every run;
+# they are meant to be run locally (`pytest tests/integration`) and are
+# described in docs/TEST_REPORT.md. Everything here needs no browser and no
+# network, and the Qt tests run on the offscreen platform.
+
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: Unit tests (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run the unit tests
+        env:
+          # Qt has no display on a runner; the suite sets this itself, but
+          # setting it here too means a failure is a real failure rather than
+          # a missing platform plugin.
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/unit

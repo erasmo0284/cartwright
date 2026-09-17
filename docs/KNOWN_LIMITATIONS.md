@@ -153,7 +153,7 @@ against the real thing:
 
 ## Installer
 
-`AmazonPurchaseBot-1.0.0-Setup.exe` was built with Inno Setup 6.7.3 and
+`Cartwright-1.0.0-Setup.exe` was built with Inno Setup 6.7.3 and
 tested unattended: install (exit 0, 5.1 s, no administrator prompt, 217 MB in
 `%LOCALAPPDATA%\Programs`), launch of the installed copy, and uninstall
 (exit 0, program and shortcuts removed, **user data kept**, the

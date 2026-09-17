@@ -6,8 +6,8 @@ PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 ## Summary
 
 ```
-1160 tests collected
-1092 passed, 68 skipped in 181s
+1187 tests collected
+1118 passed, 69 skipped in 178s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -134,12 +134,12 @@ so the test cannot be satisfied by logging nothing.
 | Real first-run browser install | 437 MB downloaded into the app's own directory |
 | Clean shutdown leaves no orphaned browser | 8 `chrome.exe` while running → **0** after `shutdown()`, in 0.1 s |
 | PyInstaller build | 213 MB onedir, `--version` smoke test passed |
-| Packaged app launches | Window titled "Amazon Purchase Bot", 110 MB working set |
-| Packaged app drives the browser | Process tree `AmazonPurchaseBot.exe → node.exe → 8× chrome.exe` |
+| Packaged app launches | Window titled "Cartwright", 110 MB working set |
+| Packaged app drives the browser | Process tree `Cartwright.exe → node.exe → 8× chrome.exe` |
 | Packaged app after a hard kill | Restarted cleanly; no migration re-run; browser started again |
 | Installer build | 55 MB `Setup.exe` |
 | Unattended install | Exit 0 in 5.1 s, no admin prompt, 217 MB in `%LOCALAPPDATA%\Programs` |
-| Start Menu AppUserModelID | `Get-StartApps` reports `AmazonPurchaseBot.Desktop` |
+| Start Menu AppUserModelID | `Get-StartApps` reports `Cartwright.Desktop` |
 | Installed copy runs | Window created, AUMID registered, browser started, no errors |
 | Unattended uninstall | Exit 0 in 8.1 s; program and shortcuts removed; **user data kept**; `AppUserModelId` and `Run` keys removed |
 | Every screen and dialog, light and dark | 30 PNGs in `docs/screens/`, reviewed individually |
@@ -327,7 +327,7 @@ they establish, and what they do not:
 
 | Check | Result |
 |---|---|
-| AUMID registration | `register_aumid()` returns True and writes `HKCU\SOFTWARE\Classes\AppUserModelId\AmazonPurchaseBot.Desktop`; the installed Start Menu shortcut carries the same id (read back with `System.AppUserModel.ID`) |
+| AUMID registration | `register_aumid()` returns True and writes `HKCU\SOFTWARE\Classes\AppUserModelId\Cartwright.Desktop`; the installed Start Menu shortcut carries the same id (read back with `System.AppUserModel.ID`) |
 | Sending a toast | The real `Notifier` was run outside the test suite, against real WinRT. `self_test()` and a real `purchase_completed` toast were both accepted, and both are recorded in `notification_events` as delivered by toast |
 | A toast **banner on screen** | **Not seen.** Eight screen captures at 1.2 s intervals show no banner, and `ToastNotificationManager.history` holds nothing for the app |
 | Control experiment | The same library sent a toast under PowerShell's own well-known AppUserModelID -- an identity Windows already trusts. It behaved identically: accepted, no banner, nothing in history. **This machine is not displaying toast banners at all**, so the app's result says nothing about the app |

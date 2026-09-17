@@ -1,4 +1,4 @@
-; Inno Setup script for Amazon Purchase Bot.
+; Inno Setup script for Cartwright.
 ;
 ; Compiled by scripts/build.py --installer, which passes /DMyAppVersion.
 ;
@@ -18,17 +18,17 @@
 ;   includes the ~430 MB browser and the signed-in Amazon session. Someone
 ;   reinstalling should not have to download it again or sign in again.
 
-#define MyAppName "Amazon Purchase Bot"
-#define MyAppShortName "AmazonPurchaseBot"
-#define MyAppPublisher "Amazon Purchase Bot"
-#define MyAppExeName "AmazonPurchaseBot.exe"
-#define MyDataFolder "AmazonPurchaseBot"
+#define MyAppName "Cartwright"
+#define MyAppShortName "Cartwright"
+#define MyAppPublisher "Cartwright"
+#define MyAppExeName "Cartwright.exe"
+#define MyDataFolder "Cartwright"
 
 #ifndef MyAppVersion
   #define MyAppVersion "1.0.0"
 #endif
 
-#define DistDir "..\dist\AmazonPurchaseBot"
+#define DistDir "..\dist\Cartwright"
 
 [Setup]
 ; Generated once and never changed: it is what identifies an upgrade as an
@@ -71,7 +71,7 @@ LicenseFile=..\installer\license.txt
 
 ; --- upgrading over a running copy --------------------------------------
 ; Must match BRAND.single_instance_key's mutex name in the application.
-AppMutex=AmazonPurchaseBot.SingleInstance
+AppMutex=Cartwright.SingleInstance
 CloseApplications=yes
 CloseApplicationsFilter=*.exe
 RestartApplications=no
@@ -93,9 +93,9 @@ Source: "{#DistDir}\*"; DestDir: "{app}"; \
 ; The Start Menu shortcut also gives Windows an AppUserModelID target, which
 ; is what lets notifications show the application's own name and icon.
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
-    AppUserModelID: "AmazonPurchaseBot.Desktop"
+    AppUserModelID: "Cartwright.Desktop"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
-    AppUserModelID: "AmazonPurchaseBot.Desktop"; Tasks: desktopicon
+    AppUserModelID: "Cartwright.Desktop"; Tasks: desktopicon
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
     Parameters: "--tray"; Tasks: startupicon
 
@@ -176,9 +176,9 @@ begin
       it keeps the uninstall clean; it is recreated on next run if the app is
       reinstalled. }
     RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER,
-      'SOFTWARE\Classes\AppUserModelId\AmazonPurchaseBot.Desktop');
+      'SOFTWARE\Classes\AppUserModelId\Cartwright.Desktop');
     { And the "start with Windows" entry, if the app created one. }
     RegDeleteValue(HKEY_CURRENT_USER,
-      'Software\Microsoft\Windows\CurrentVersion\Run', 'AmazonPurchaseBot');
+      'Software\Microsoft\Windows\CurrentVersion\Run', 'Cartwright');
   end;
 end;

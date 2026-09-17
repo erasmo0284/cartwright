@@ -38,7 +38,7 @@ def _browsers_dir() -> Path:
     # The real user directory is deliberate: these tests need the browser the
     # application installed, and the ``app_paths`` fixture's temporary root
     # would never contain one.
-    saved = os.environ.pop("APB_DATA_DIR", None)
+    saved = os.environ.pop("CARTWRIGHT_DATA_DIR", None)
     try:
         from app.paths import get_paths, reset_paths_cache
 
@@ -46,7 +46,7 @@ def _browsers_dir() -> Path:
         return get_paths().playwright_browsers_dir
     finally:
         if saved is not None:
-            os.environ["APB_DATA_DIR"] = saved
+            os.environ["CARTWRIGHT_DATA_DIR"] = saved
         from app.paths import reset_paths_cache as _reset
 
         _reset()

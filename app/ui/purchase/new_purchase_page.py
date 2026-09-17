@@ -15,6 +15,10 @@ Three deliberate choices:
   never a one-click alternative here.
 * **Test mode is stated on this screen**, not just in Settings, because it
   changes what the buttons will actually do.
+* **The action card is pinned below the scroll area**, not inside it. The
+  product summary and the limits can be long, and the buttons that act on
+  them were ending up below the fold on an ordinary window, so the rules
+  scroll and the actions stay put.
 """
 
 from __future__ import annotations
@@ -114,13 +118,25 @@ class NewPurchasePage(QWidget):
         self._rules_editor = RulesEditor()
         result_layout.addWidget(self._rules_editor)
 
-        result_layout.addWidget(self._build_action_card())
-        self._result_area.setVisible(False)
         self._layout.addWidget(self._result_area)
 
         self._layout.addStretch(1)
         scroll.setWidget(body)
-        root.addWidget(scroll)
+        root.addWidget(scroll, 1)
+
+        # The actions live outside the scroll area, so that whatever the
+        # product summary and the limits come to, the buttons that act on them
+        # -- and the mode note and rule warning that qualify them -- are on
+        # screen without scrolling. The side margins match the scrolled body's
+        # so the card stays in the same column as the cards above it.
+        self._action_area = QWidget()
+        action_layout = QVBoxLayout(self._action_area)
+        action_layout.setContentsMargins(24, 8, 24, 20)
+        action_layout.setSpacing(0)
+        action_layout.addWidget(self._build_action_card())
+        root.addWidget(self._action_area)
+
+        self._set_result_visible(False)
 
         settings.changed.connect(lambda _s: self._refresh_mode_note())
         self._refresh_mode_note()
@@ -257,6 +273,17 @@ class NewPurchasePage(QWidget):
 
     # ---- state -----------------------------------------------------------
 
+    def _set_result_visible(self, visible: bool) -> None:
+        """Show or hide everything that only makes sense with a product.
+
+        The summary and the limits scroll while the actions are pinned below
+        them, so the two halves are separate widgets and have to be switched
+        together: a pinned card offering to buy a product that is no longer on
+        screen would be worse than either half alone.
+        """
+        self._result_area.setVisible(visible)
+        self._action_area.setVisible(visible)
+
     def focus_input(self) -> None:
         """Put the cursor in the paste field. Called when the page is shown."""
         self._url_input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
@@ -266,7 +293,7 @@ class NewPurchasePage(QWidget):
         """Clear the screen back to its starting state."""
         self._inspection = None
         self._url_input.clear()
-        self._result_area.setVisible(False)
+        self._set_result_visible(False)
         self._empty.setVisible(True)
         self._progress.stop()
         self._set_input_hint(
@@ -298,7 +325,7 @@ class NewPurchasePage(QWidget):
         self._rules_editor.set_rules(
             inspection.suggested_rules, snapshot=inspection.snapshot
         )
-        self._result_area.setVisible(True)
+        self._set_result_visible(True)
         self._refresh_mode_note()
         self._update_actions_enabled()
 
@@ -318,7 +345,7 @@ class NewPurchasePage(QWidget):
     def show_failure(self, error: AppError) -> None:
         """Render a failed product check inline, keeping the input intact."""
         self._progress.stop()
-        self._result_area.setVisible(False)
+        self._set_result_visible(False)
         self._empty.setVisible(True)
         self._check_button.setEnabled(bool(self._url_input.text().strip()))
         self._set_input_hint(f"{error.title}. {error.detail}", StatusSeverity.ERROR)

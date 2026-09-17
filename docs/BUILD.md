@@ -37,8 +37,8 @@ dark themes, for visual review:
 .venv\Scripts\python.exe scripts\build.py --clean
 ```
 
-Output: `dist/AmazonPurchaseBot/` — about 213 MB, containing
-`AmazonPurchaseBot.exe` (windowed) and `AmazonPurchaseBot-debug.exe`
+Output: `dist/Cartwright/` — about 213 MB, containing
+`Cartwright.exe` (windowed) and `Cartwright-debug.exe`
 (console).
 
 The script generates the multi-resolution `.ico` and the Windows version
@@ -59,7 +59,7 @@ Then:
 .venv\Scripts\python.exe scripts\build.py --installer
 ```
 
-Output: `installer/output/AmazonPurchaseBot-1.0.0-Setup.exe` — about 55 MB.
+Output: `installer/output/Cartwright-1.0.0-Setup.exe` — about 55 MB.
 
 `scripts/build.py` looks for `ISCC.exe` in the per-user location that
 `winget` uses (`%LOCALAPPDATA%\Programs\Inno Setup 6\`) as well as the two
@@ -70,10 +70,10 @@ without administrator rights.
 
 ```powershell
 # install, unattended
-.\installer\output\AmazonPurchaseBot-1.0.0-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+.\installer\output\Cartwright-1.0.0-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 # uninstall, unattended (keeps the user's data)
-& "$env:LOCALAPPDATA\Programs\AmazonPurchaseBot\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+& "$env:LOCALAPPDATA\Programs\Cartwright\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ## The three packaging decisions, and why
@@ -93,7 +93,7 @@ every application update, and in onefile mode re-extracting it on every
 launch.
 
 Instead `PLAYWRIGHT_BROWSERS_PATH` is set to
-`%LOCALAPPDATA%\AmazonPurchaseBot\browser\playwright` **before Playwright is
+`%LOCALAPPDATA%\Cartwright\browser\playwright` **before Playwright is
 imported** (the value is read by the Node driver process it spawns, and must
 match between install time and run time), and the browser is installed on
 first run.
@@ -164,10 +164,10 @@ The artefacts that accompany this documentation were produced on
 | PyInstaller | 6.22.3 |
 | Inno Setup | 6.7.3 |
 | Host | Windows 11 Pro 26200 |
-| `dist\AmazonPurchaseBot\` | 213 MB, onedir, no UPX |
-| `AmazonPurchaseBot-1.0.0-Setup.exe` | 57,918,688 bytes (55 MB) |
-| Installer SHA-256 | `a6638b726248e2ddd4691ddcf1ae850083f81fc6de41745823fd6733b15ec9c0` |
-| Installed size | 217 MB in `%LOCALAPPDATA%\Programs\AmazonPurchaseBot` |
+| `dist\Cartwright\` | 213 MB, onedir, no UPX |
+| `Cartwright-1.0.0-Setup.exe` | 57,937,901 bytes (55 MB) |
+| Installer SHA-256 | `0d4965ba4ce8382cbe7f75b6de3ecb7e9cebb427563997f02331a9831cd1ad7c` |
+| Installed size | 217 MB in `%LOCALAPPDATA%\Programs\Cartwright` |
 
 The browser is **not** in either artefact: it is downloaded on first run into
 the user's own data directory, which is why the installer is 55 MB rather

@@ -10,12 +10,12 @@ browser/
 *.sqlite-wal
 *.sqlite-shm
 
-# Application data, if APB_DATA_DIR is ever pointed inside the repo.
+# Application data, if CARTWRIGHT_DATA_DIR is ever pointed inside the repo.
 data/
 logs/
 screenshots/
 backups/
-AmazonPurchaseBot/
+Cartwright/
 
 # --- Build output ----------------------------------------------------------
 build/

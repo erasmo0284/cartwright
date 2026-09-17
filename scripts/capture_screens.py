@@ -448,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     output.mkdir(parents=True, exist_ok=True)
 
     data_dir = Path(tempfile.mkdtemp(prefix="apb-screens-"))
-    os.environ["APB_DATA_DIR"] = str(data_dir)
+    os.environ["CARTWRIGHT_DATA_DIR"] = str(data_dir)
 
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QGuiApplication

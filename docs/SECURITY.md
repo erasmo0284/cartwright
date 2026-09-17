@@ -157,7 +157,7 @@ that `record_submission` was never called.
 
 ## Local data
 
-Everything is under `%LOCALAPPDATA%\AmazonPurchaseBot\`, which is per-user and
+Everything is under `%LOCALAPPDATA%\Cartwright\`, which is per-user and
 not world-readable by default. The database is not encrypted: it contains a
 watch list, a price history and masked payment labels, and encrypting it with
 a key stored beside it would be theatre. The genuinely sensitive artefact is
@@ -166,7 +166,7 @@ that machine is — by the user's Windows account.
 
 `.gitignore` excludes `browser/`, `*amazon-profile*`, `**/Default/Cookies*`,
 `data/`, `logs/` and the build output, so a profile cannot be committed even
-if `APB_DATA_DIR` were pointed inside the repository.
+if `CARTWRIGHT_DATA_DIR` were pointed inside the repository.
 
 Product thumbnails are cached in `images/`, one small PNG per product,
 photographed from the page as described above. Deleting the folder costs a

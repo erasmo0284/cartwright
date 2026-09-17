@@ -1,4 +1,4 @@
-# Amazon Purchase Bot — User Guide
+# Cartwright — User Guide
 
 A small Windows app that watches a product on Amazon and, when the conditions
 you set are met, either tells you or buys it.
@@ -10,7 +10,7 @@ using its own private browser window on your PC.
 
 ## Installing
 
-1. Run `AmazonPurchaseBot-1.0.0-Setup.exe`.
+1. Run `Cartwright-1.0.0-Setup.exe`.
 2. It installs for you only, so Windows will not ask for an administrator
    password.
 3. Tick "Create a desktop icon" if you want one.
@@ -313,7 +313,7 @@ contains passwords, cookies or card details, and it says what it left out.
 ## Where your data is
 
 ```
-%LOCALAPPDATA%\AmazonPurchaseBot\
+%LOCALAPPDATA%\Cartwright\
 ```
 
 Everything is there: the database, the private browser profile, the logs.
