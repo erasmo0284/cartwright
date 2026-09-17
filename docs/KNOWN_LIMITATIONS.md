@@ -6,30 +6,37 @@ An honest list. Where something is untested rather than broken, it says so.
 
 This is the most important item on the page.
 
-**No end-to-end purchase has been performed against amazon.com.** Every
-checkout and order test in this repository runs against local fixture pages
-(`tests/fixtures/amazon_pages.py`) served to a real Chromium through request
-interception. That proves the parsing, the guard, the state machine, the
-submit barriers and the confirmation reading are correct *given markup of that
-shape*. It does not prove Amazon's current live markup matches those shapes.
+**No order has been placed on amazon.com.** A full Test Mode rehearsal *has*
+now been run against the live site on a signed-in account (2026-09-16): the
+app read the real product page, opened Buy Now, read the real checkout --
+totals, tax, delivery address, payment method -- ran the guard, located the
+order button and stopped. Every check passed. See
+[TEST_REPORT.md](TEST_REPORT.md) for what that exposed and fixed.
+
+What remains unproven is the last click and everything after it: the order
+being accepted, Amazon's confirmation page, and reading the order number back
+out of order history. Those cannot be verified without spending money.
 
 Specifically unverified against the live site:
 
 | Flow | Status |
 |---|---|
-| Product page parsing | Fixtures only |
-| Cart reading and isolation | Fixtures only |
-| Checkout totals, address, payment | Fixtures only |
-| Buy Now / Turbo Checkout modal | Fixtures only; the iframe path has never run |
+| Product page parsing | **Verified live** |
+| Cart reading and isolation | Empty cart verified live; a cart with items, and setting items aside, are fixtures only |
+| Checkout totals, address, payment | **Verified live** on the current pipeline |
+| Buy Now | **Verified live** (it navigates to a checkout page on this account) |
+| Turbo Checkout modal | Fixtures only, against a real cross-document iframe; Amazon did not serve this layout |
 | Placing a real order | **Never run** |
 | Order confirmation reading | Fixtures only |
 | Order-history verification | Fixtures only |
-| Sign-in, one-time codes, CAPTCHA handoff | Detection tested on fixtures; a real Amazon challenge has never been driven |
+| Sign-in and security checks | **Verified live**: Amazon asked for a check, the app paused and waited for the human, then detected the session |
+| CAPTCHA handoff | Detection tested on fixtures; no real CAPTCHA has appeared |
 
-Verifying these requires a real Amazon account and, for the last one, spending
-real money. **The intended first run is: connect the account, then run a test
-in Test Mode on a cheap item, and read the result.** That exercises the entire
-path except the final click, which is exactly what Test Mode exists for.
+Verifying what is left requires spending real money. **The intended first run
+is still: connect the account, then run a test in Test Mode on a cheap item,
+and read the result.** That exercises the entire path except the final click,
+which is exactly what Test Mode exists for -- and it is how the six defects
+above were found.
 
 The selectors were compiled from current public research (see
 `app/automation/selectors.py`), each as an ordered fallback chain, and the

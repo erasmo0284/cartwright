@@ -10,6 +10,8 @@ the checkout reader can and cannot see from outside that frame.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.automation.cart_manager import MANAGER as CART
@@ -591,6 +593,152 @@ def watch_turbo_button(page: object, frame: object, clicks: list[str]) -> None:
           });
         """
     )
+
+
+class TestCurrentCheckout:
+    """Amazon's checkout as it is served today, not as it once was.
+
+    A live Buy Now order on 2026-09-16 went to
+    ``/checkout/p/...?pipelineType=Chewbacca&isBuyNow=1``, and the app read
+    nothing off it: no total, no address, no payment, and six "line items"
+    that were a promo panel, a title span and a gift-options link. Every
+    assertion here corresponds to something that was broken then, so this
+    class is the regression test for a purchase being possible at all.
+    """
+
+    CURRENT_URL = "https://www.amazon.com/checkout/p/p-123/spc?pipelineType=Chewbacca"
+
+    def test_the_money_is_read_from_the_list_summary(self, load) -> None:
+        """The summary is a list of ``li`` rows, not a table."""
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert snapshot.item_subtotal == usd("19.99")
+        assert snapshot.shipping == usd("0.00")
+        assert snapshot.tax == usd("1.45")
+        assert snapshot.order_total == usd("21.44"), "the grand total row"
+
+    def test_a_container_row_is_not_read_as_a_money_row(self, load) -> None:
+        """The row that holds every other row must not be matched.
+
+        It classifies as "items" and then takes the largest price inside it,
+        which is the grand total -- so the item subtotal would read $21.44.
+        """
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        snapshot = CHECKOUT.read_checkout(reader)
+        assert snapshot.item_subtotal != snapshot.order_total
+
+    def test_the_address_and_card_are_read(self, load) -> None:
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert snapshot.address_label is not None
+        assert "EXAMPLETOWN" in snapshot.address_label
+        assert snapshot.payment_label == "Paying with Visa 1111"
+
+    def test_the_payment_label_is_the_visible_text_not_the_json(self, load) -> None:
+        """The panel's ``textContent`` is mostly an inline JSON blob.
+
+        Reading it produced a "payment method" of four hundred characters of
+        serialised configuration, which would then be compared against the
+        stored expectation on every future purchase.
+        """
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert snapshot.payment_label is not None
+        assert "swpUnavailableMessage" not in snapshot.payment_label
+        assert "{" not in snapshot.payment_label
+        assert len(snapshot.payment_label) < 40
+
+    def test_one_order_reads_as_one_line(self, load) -> None:
+        """Six matches for one item is how an ordinary order looks foreign."""
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert len(snapshot.lines) == 1
+        line = snapshot.lines[0]
+        assert line.asin == ASIN, "the ASIN is on a descendant of the row"
+        assert line.unit_price == usd("19.99")
+        assert line.title is not None
+        assert "Subscribe" not in line.title, "the upsell is not the line's title"
+
+    def test_a_missing_quantity_is_not_invented(self, load) -> None:
+        """Amazon prints no quantity for a single item; None says so."""
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        snapshot = CHECKOUT.read_checkout(reader)
+        assert snapshot.lines[0].quantity is None
+
+    def test_a_printed_quantity_is_still_read(self, load) -> None:
+        """When Amazon does print one, the reader must prefer it."""
+        reader = load(
+            self.CURRENT_URL, pages.current_checkout_page(show_quantity=2)
+        )
+        snapshot = CHECKOUT.read_checkout(reader)
+        assert snapshot.lines[0].quantity == 2
+
+    def test_the_guard_passes_a_conforming_current_checkout(
+        self, load, product, rules
+    ) -> None:
+        """The whole point: this order can now be authorised.
+
+        The quantity is not printed, so it is confirmed from the item
+        subtotal; everything else is read from the page.
+        """
+        reader = load(
+            self.CURRENT_URL,
+            pages.current_checkout_page(item_price="109.97", item_subtotal="109.97",
+                                        tax="7.97", order_total="117.94"),
+        )
+        snapshot = CHECKOUT.read_checkout(reader)
+        conforming = replace(
+            rules,
+            expected_address_label=snapshot.address_label,
+            expected_payment_label=snapshot.payment_label,
+        )
+        report = GUARD.check_final(conforming, product, snapshot)
+        assert report.passed, report.summary
+
+    def test_a_larger_subtotal_than_one_unit_blocks(
+        self, load, product, rules
+    ) -> None:
+        """Three of them, with no quantity printed: the money gives it away."""
+        reader = load(
+            self.CURRENT_URL,
+            pages.current_checkout_page(item_price="109.97", item_subtotal="329.91",
+                                        tax="23.09", order_total="353.00"),
+        )
+        snapshot = CHECKOUT.read_checkout(reader)
+        report = GUARD.check_final(rules, product, snapshot)
+        assert not report.passed
+
+    def test_the_order_button_is_found_on_the_current_layout(self, load) -> None:
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        control = CHECKOUT.find_place_order(reader)
+        assert control is not None
+        assert control.in_turbo_frame is False
+
+    def test_test_mode_cannot_submit_on_the_current_layout(self, load, page) -> None:
+        """The barrier does not care which layout Amazon served."""
+        reader = load(self.CURRENT_URL, pages.current_checkout_page())
+        page.evaluate(
+            """
+            document.querySelectorAll("input#placeOrder").forEach(b => {
+              b.addEventListener('click', e => { e.preventDefault(); window.__clicked = true; });
+            });
+            """
+        )
+        authorization = SubmitAuthorization(
+            purchase_job_id=1,
+            attempt_id=1,
+            approved_total=usd("21.44"),
+            guard_passed=True,
+            test_mode=True,
+            record_submission=lambda: None,
+        )
+        with pytest.raises(AppError):
+            CHECKOUT.submit(reader, authorization)
+        assert page.evaluate("window.__clicked === true") is False
 
 
 class TestTurboCheckout:

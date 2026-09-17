@@ -275,10 +275,7 @@ class CheckoutManager:
         lines: list[CartLine] = []
         for index in range(min(total, 40)):
             row = rows.nth(index)
-            try:
-                asin = row.get_attribute("data-asin", timeout=1_500)
-            except Exception:  # noqa: BLE001
-                asin = None
+            asin = self._row_asin(row)
             try:
                 text = clean(row.text_content(timeout=1_500)) or ""
             except Exception:  # noqa: BLE001
@@ -305,6 +302,30 @@ class CheckoutManager:
                 )
             )
         return lines
+
+    @staticmethod
+    def _row_asin(row: Any) -> str | None:
+        """The ASIN of a checkout line, from the row or from inside it.
+
+        The current layout puts ``data-asin`` on a node *within* the line
+        rather than on the line itself, and the row's own id is a base64
+        blob. A row whose ASIN cannot be found is treated as an unrelated
+        item by the guard, so looking in both places is what stops an
+        ordinary order being refused as somebody else's.
+        """
+        try:
+            own = row.get_attribute("data-asin", timeout=1_500)
+        except Exception:  # noqa: BLE001
+            own = None
+        if own:
+            return own
+        try:
+            inner = row.locator(selectors.CHECKOUT_LINE_ASIN_NODE).first
+            if inner.count() == 0:
+                return None
+            return inner.get_attribute("data-asin", timeout=1_500)
+        except Exception:  # noqa: BLE001
+            return None
 
     @staticmethod
     def _line_quantity(row: Any, text: str) -> int | None:
@@ -395,7 +416,9 @@ class CheckoutManager:
     def _read_address(
         self, reader: PageReader, scope: Any | None = None
     ) -> str | None:
-        reading = reader.text(selectors.CHECKOUT_ADDRESS, scope=scope)
+        reading = reader.text(
+            selectors.CHECKOUT_ADDRESS, scope=scope, visible_text=True
+        )
         if not reading.value:
             return None
         # The address block is multi-line; collapse it to a single readable
@@ -408,7 +431,9 @@ class CheckoutManager:
     def _read_payment(
         self, reader: PageReader, scope: Any | None = None
     ) -> str | None:
-        reading = reader.text(selectors.CHECKOUT_PAYMENT, scope=scope)
+        reading = reader.text(
+            selectors.CHECKOUT_PAYMENT, scope=scope, visible_text=True
+        )
         if not reading.value:
             return None
         return clean(reading.value)[:200] if clean(reading.value) else None

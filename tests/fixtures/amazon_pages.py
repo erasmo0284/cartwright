@@ -634,6 +634,179 @@ def checkout_page(
 TURBO_IFRAME_URL = "https://www.amazon.com/checkout/turbo-checkout-iframe.html"
 
 
+#: A line row's id on the current checkout is a base64 blob. Tests must not
+#: depend on it, which is the point of including one that looks real.
+CURRENT_LINE_ID = (
+    "bWlxOi8vZG9jdW1lbnQ6MS4wL09yZGVyaW5nL2FtYXpvbjoxLjAvTGluZUl0ZW06MS4wLzdlYjJlMWNi"
+)
+
+
+def current_checkout_page(
+    *,
+    asin: str = DEFAULT_ASIN,
+    title: str = DEFAULT_TITLE,
+    item_price: str = "19.99",
+    item_subtotal: str = "19.99",
+    shipping: str = "0.00",
+    tax: str = "1.45",
+    order_total: str = "21.44",
+    address: str | None = "1 EXAMPLE RD, EXAMPLETOWN, NC, 27500, United States",
+    payment: str | None = "Paying with Visa 1111",
+    show_quantity: int | None = None,
+    subscribe_and_save_upsell: bool = True,
+    place_order_button: bool = True,
+) -> str:
+    """Amazon's current checkout, as served for a Buy Now order.
+
+    Reproduced from a live page on 2026-09-16, because every earlier
+    assumption in this file was about the older layout and none of it
+    matched. The details that matter, each of which broke something:
+
+    * the order summary is a ``<ul>`` of ``<li>`` rows -- "Items: $19.99" --
+      and the grand total is ``li.grand-total-cell``, not a table row;
+    * the delivery address has its own element, ``#deliver-to-address-text``;
+    * the payment panel's ``textContent`` is hundreds of characters of inline
+      JSON wrapped around the twenty that name the card, so it can only be
+      read as *visible* text;
+    * the line row is ``div.lineitem-container`` with a base64 id, and its
+      ASIN sits on a descendant, not on the row;
+    * **no quantity is printed at all** for a single item, which is why the
+      guard derives it from the item subtotal;
+    * the Subscribe & Save upsell inside the row carries the same ASIN, and
+      the surrounding ``checkout-item-block`` ids wrap things that are not
+      line items.
+    """
+    quantity_markup = (
+        f'<span class="a-size-mini">Qty: {show_quantity}</span>'
+        if show_quantity is not None
+        else ""
+    )
+
+    upsell = (
+        f"""
+        <div id="sns-item-v2-0" class="a-section" data-asin="{asin}">
+          <span>Subscribe &amp; Save: Save up to 5% on future auto-deliveries</span>
+        </div>
+        """
+        if subscribe_and_save_upsell
+        else ""
+    )
+
+    # The payment panel's real shape: a script's worth of JSON sitting in the
+    # same element as the visible text.
+    payment_block = (
+        f"""
+        <div id="checkout-paymentOptionPanel" class="a-cardui panel-content">
+          <div id="selected-payment-methods-list-container" class="a-section">
+            <div id="selected-payment-method-_default" class="a-row">
+              <span class="a-declarative">{payment}</span>
+              <span class="aok-hidden" style="display:none">{{"enrollmentHeader":"Shop with Points at Amazon.com","swpUnavailableMessage":"\u003cdiv id=\"swp-service-unavailable\" class=\"a-box a-alert\"\u003e"}}</span>
+            </div>
+          </div>
+        </div>
+        """
+        if payment
+        else '<div id="checkout-paymentOptionPanel"></div>'
+    )
+
+    address_block = (
+        f"""
+        <div id="checkout-delivery-address-panel" class="checkout-experience-panel">
+          <div id="checkout-deliveryAddressPanel" class="a-cardui panel-content">
+            <span>Delivering to</span>
+            <div id="deliver-to-address-text" class="a-color-base">{address}</div>
+            <a id="change-delivery-link" href="#">Change</a>
+          </div>
+        </div>
+        """
+        if address
+        else '<div id="checkout-deliveryAddressPanel"></div>'
+    )
+
+    order_button = (
+        """
+        <span id="submitOrderButtonId" data-testid="SPC_selectPlaceOrder">
+          <input id="placeOrder" type="submit" name="placeYourOrder1"
+                 value="Place your order" title="Place your order">
+        </span>
+        <span id="bottomSubmitOrderButtonId" data-testid="SPC_selectPlaceOrder">
+          <input id="placeOrder" type="submit" name="placeYourOrder1"
+                 value="Place your order" title="Place your order">
+        </span>
+        """
+        if place_order_button
+        else ""
+    )
+
+    body = f"""
+    {_nav(True)}
+    <div id="checkout-experience-container" class="a-row a-ws-row">
+      <div id="checkout-experience-left-column" class="a-column">
+        {address_block}
+        {payment_block}
+        <div id="checkout-item-block-panel" class="checkout-experience-panel spp-panel">
+          <div id="checkout-item-block-0" class="a-cardui checkout-experience-block">
+            <span>Arriving tomorrow</span>
+            <div id="{CURRENT_LINE_ID}"
+                 class="a-box a-spacing-top-base lineitem-container checkout-card-content">
+              <div class="a-fixed-left-grid" data-asin="{asin}">
+                <span id="checkout-item-block-item-primary-title-{CURRENT_LINE_ID}"
+                      class="lineitem-title-text break-word">{title}</span>
+                <span class="a-price apex-price-to-pay-value">
+                  <span class="a-offscreen">${item_price}</span>
+                </span>
+                {quantity_markup}
+              </div>
+              {upsell}
+            </div>
+            <span id="checkout-item-block-item-product-trends-{CURRENT_LINE_ID}"
+                  class="a-size-mini">20K+ bought in past month</span>
+            <a id="checkout-item-block-gift-options-link-{CURRENT_LINE_ID}"
+               class="a-link-normal" href="#">Add gift options</a>
+          </div>
+        </div>
+      </div>
+      <div id="checkout-experience-right-column" class="a-column">
+        <div id="subtotals" class="a-cardui rcx-checkout-custom-card">
+          <div class="a-section">
+            <span>Place your order</span>
+            {order_button}
+          </div>
+          <hr class="a-divider-normal">
+          <div>
+            <ul class="a-unordered-list a-nostyle">
+              <li class="a-spacing-mini">
+                <div class="order-summary-grid">
+                  <div class="order-summary-line-term">Items:</div>
+                  <div class="order-summary-line-definition">${item_subtotal}</div>
+                </div>
+              </li>
+              <li class="a-spacing-mini">
+                <div class="order-summary-grid">
+                  <div class="order-summary-line-term">Shipping &amp; handling:</div>
+                  <div class="order-summary-line-definition">${shipping}</div>
+                </div>
+              </li>
+              <li class="a-spacing-mini">
+                <div class="order-summary-grid">
+                  <div class="order-summary-line-term">Estimated tax to be collected:</div>
+                  <div class="order-summary-line-definition">${tax}</div>
+                </div>
+              </li>
+              <li class="grand-total-cell">
+                <span class="a-list-item a-size-medium a-color-base a-text-bold">
+                  Order total: ${order_total}
+                </span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    return _shell(body, title="Place Your Order - Amazon Checkout")
+
+
 def turbo_checkout_frame(
     *,
     asin: str = DEFAULT_ASIN,

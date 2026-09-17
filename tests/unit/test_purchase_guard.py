@@ -465,6 +465,131 @@ class TestQuantity:
         assert not report.passed
         assert status_of(report, CHECK_QUANTITY) is CheckStatus.FAIL
 
+    def test_an_unshown_quantity_is_confirmed_from_the_item_subtotal(
+        self, rules, product, checkout
+    ) -> None:
+        """Amazon's current checkout prints no quantity when there is one.
+
+        Confirmed on a live Buy Now order on 2026-09-16: no "Qty" anywhere on
+        the page. Refusing outright would block every purchase; fabricating a
+        1 would validate a number nobody observed. The arithmetic is the third
+        option -- the item subtotal has to be exactly the unit price times the
+        quantity the user asked for, which only the right number satisfies.
+        """
+        unshown = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=ASIN, title="x", quantity=None, unit_price=usd("109.97")
+                    ),
+                ),
+                "item_subtotal": usd("109.97"),
+            }
+        )
+        report = GUARD.check_final(rules, product, unshown)
+        assert status_of(report, CHECK_QUANTITY) is CheckStatus.PASS
+        assert report.passed
+
+    def test_an_unshown_quantity_whose_subtotal_disagrees_blocks(
+        self, rules, product, checkout
+    ) -> None:
+        """Three of them, with the quantity not printed: the money gives it away."""
+        three = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=ASIN, title="x", quantity=None, unit_price=usd("109.97")
+                    ),
+                ),
+                "item_subtotal": usd("329.91"),
+            }
+        )
+        report = GUARD.check_final(rules, product, three)
+        assert status_of(report, CHECK_QUANTITY) is CheckStatus.FAIL
+        assert not report.passed
+
+    def test_an_unshown_quantity_with_no_subtotal_blocks(
+        self, rules, product, checkout
+    ) -> None:
+        """Nothing to derive from means nothing is derived."""
+        blank = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=ASIN, title="x", quantity=None, unit_price=usd("109.97")
+                    ),
+                ),
+                "item_subtotal": None,
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, blank), CHECK_QUANTITY
+        ) is CheckStatus.FAIL
+
+    def test_an_unshown_quantity_with_no_unit_price_blocks(
+        self, rules, product, checkout
+    ) -> None:
+        unpriced = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(asin=ASIN, title="x", quantity=None, unit_price=None),
+                ),
+                "item_subtotal": usd("109.97"),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, unpriced), CHECK_QUANTITY
+        ) is CheckStatus.FAIL
+
+    def test_a_discounted_subtotal_is_not_treated_as_a_quantity(
+        self, rules, product, checkout
+    ) -> None:
+        """A subtotal that is not a whole multiple must never pass.
+
+        A promotion, a coupon or a second line all break the arithmetic, and
+        breaking it is what makes this safe.
+        """
+        discounted = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=ASIN, title="x", quantity=None, unit_price=usd("109.97")
+                    ),
+                ),
+                "item_subtotal": usd("99.00"),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, discounted), CHECK_QUANTITY
+        ) is CheckStatus.FAIL
+
+    def test_a_second_line_stops_the_subtotal_being_used(
+        self, rules, product, checkout
+    ) -> None:
+        """With another item in the order the subtotal says nothing about ours."""
+        two_lines = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=ASIN, title="x", quantity=None, unit_price=usd("109.97")
+                    ),
+                    CartLine(
+                        asin="B0OTHER0001", title="y", quantity=1, unit_price=usd("5.00")
+                    ),
+                ),
+                "item_subtotal": usd("109.97"),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, two_lines), CHECK_QUANTITY
+        ) is CheckStatus.FAIL
+
     def test_quantity_split_across_lines_is_summed(self, rules, product, checkout) -> None:
         split = CheckoutSnapshot(
             **{

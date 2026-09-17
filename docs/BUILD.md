@@ -165,8 +165,8 @@ The artefacts that accompany this documentation were produced on
 | Inno Setup | 6.7.3 |
 | Host | Windows 11 Pro 26200 |
 | `dist\AmazonPurchaseBot\` | 213 MB, onedir, no UPX |
-| `AmazonPurchaseBot-1.0.0-Setup.exe` | 57,918,659 bytes (55 MB) |
-| Installer SHA-256 | `0e5e6a29bfa4949d68ac6ec68bbe0ca313cdd15d4765179bda808d9ad4519acf` |
+| `AmazonPurchaseBot-1.0.0-Setup.exe` | 57,918,688 bytes (55 MB) |
+| Installer SHA-256 | `a6638b726248e2ddd4691ddcf1ae850083f81fc6de41745823fd6733b15ec9c0` |
 | Installed size | 217 MB in `%LOCALAPPDATA%\Programs\AmazonPurchaseBot` |
 
 The browser is **not** in either artefact: it is downloaded on first run into

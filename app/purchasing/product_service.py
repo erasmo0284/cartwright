@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from typing import Final
 
 from PySide6.QtCore import QObject, Signal
 
@@ -18,6 +19,7 @@ from app.automation.amazon_adapter import ADAPTER
 from app.automation.browser_worker import BrowserSession, BrowserWorker, Priority
 from app.config import SettingsService
 from app.core.errors import AppError, ErrorCode
+from app.core.money import Money
 from app.database.records import (
     ActivityCategory,
     ActivitySeverity,
@@ -65,6 +67,29 @@ def parse_product_reference(text: str | None) -> tuple[str, str]:
     return asin, marketplace
 
 
+#: How much head-room the suggested order limit leaves over the item price,
+#: as a percentage. US sales tax reaches about 10%, and a delivery charge
+#: under the free-shipping threshold is common; 20% covers both without
+#: being so loose that the limit stops meaning anything. It is a *suggestion*
+#: shown in the editor, not a rule the app applies by itself.
+ORDER_TOTAL_ALLOWANCE_PERCENT: Final = 20
+
+
+def suggest_order_total(price: Money | None, quantity: int) -> Money | None:
+    """A starting order-total limit: the line cost plus an allowance.
+
+    Rounded up, so the suggestion is never a cent below what it means to
+    allow. Returns ``None`` when there is no price to work from -- the guard
+    then blocks for want of a limit, which is the honest outcome.
+    """
+    if price is None or price.cents <= 0:
+        return None
+    line = price.cents * max(1, quantity)
+    padded = line * (100 + ORDER_TOTAL_ALLOWANCE_PERCENT)
+    # Ceiling division: an allowance that rounds down is not the allowance.
+    return Money(-(-padded // 100), price.currency)
+
+
 def suggest_rules(
     snapshot: ProductSnapshot,
     *,
@@ -74,17 +99,24 @@ def suggest_rules(
 ) -> PurchaseRules:
     """Pre-fill a rule set from an observation.
 
-    The suggested limits are deliberately equal to the observed values rather
-    than padded: a limit the user did not choose should never be higher than
-    the price they were shown. They can raise it themselves.
+    The **item** limit is exactly the price that was shown: a limit the user
+    did not choose should never be higher than the number in front of them.
+
+    The **order** limit cannot work that way. An order total includes tax,
+    shipping and fees that do not exist until the checkout, so suggesting the
+    item price meant the first real purchase blocked on arithmetic nobody
+    chose -- a live test of a $19.99 item stopped at a $21.44 total against a
+    $19.99 suggested limit. The suggestion therefore carries an allowance,
+    and the user sees it and can lower it.
     """
+    quantity = max(1, default_quantity)
     price = snapshot.price
     return PurchaseRules(
         expected_asin=snapshot.asin,
-        quantity=max(1, default_quantity),
+        quantity=quantity,
         currency=snapshot.currency,
         max_item_price=price,
-        max_order_total=price,
+        max_order_total=suggest_order_total(price, quantity),
         seller_policy=default_seller_policy,
         condition_policy=default_condition_policy,
         expected_variation=snapshot.variation,

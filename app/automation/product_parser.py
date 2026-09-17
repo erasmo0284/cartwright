@@ -98,7 +98,7 @@ class ProductParser:
             image_url=self._read_image(reader),
             url=self._read_canonical(reader) or reader.url() or None,
             price=price,
-            list_price=self._read_list_price(reader),
+            list_price=self._read_list_price(reader, price),
             availability=availability,
             availability_text=availability_text,
             seller=seller,
@@ -209,9 +209,28 @@ class ProductParser:
 
         return None, False
 
-    def _read_list_price(self, reader: PageReader) -> Money | None:
+    def _read_list_price(self, reader: PageReader, price: Money | None) -> Money | None:
+        """The struck-through "was" price, or ``None``.
+
+        A list price is only a list price if it is above what is being
+        charged. Anything at or below the current price is something else the
+        markup happened to share a class with -- a per-unit price, or the
+        price itself -- and reporting it would show the user a saving that
+        does not exist. It is display-only either way: no rule reads it.
+        """
         reading = reader.text(selectors.PRODUCT_LIST_PRICE)
-        return parse_money_ceiling(reading.value) if reading.value else None
+        if not reading.value:
+            return None
+        listed = parse_money_ceiling(reading.value)
+        if listed is None or price is None:
+            return listed
+        if listed.currency != price.currency or listed <= price:
+            logger.info(
+                "Ignoring a list price that is not above the price",
+                extra={"list_cents": listed.cents, "price_cents": price.cents},
+            )
+            return None
+        return listed
 
     # ---- availability ----------------------------------------------------
 
@@ -263,26 +282,102 @@ class ProductParser:
         return raw
 
     def _read_condition(self, reader: PageReader) -> ItemCondition:
+        """The condition of the offer in the buy box.
+
+        Of the offer that would be **bought**, not of anything the page
+        mentions. Amazon advertises a cheaper used copy inside the same buy
+        box, and an earlier version of this method searched the page for
+        "used", found that advertisement and reported "condition not stated"
+        -- which made a New-only rule refuse an ordinary new item. A live run
+        on 2026-09-16 blocked on exactly that.
+
+        Order matters: the active accordion row is Amazon's own statement of
+        which offer is selected, so it outranks both an explicit label
+        elsewhere on the page and any wording search.
+        """
+        active = self._condition_from_active_offer(reader)
+        if active is not ItemCondition.UNKNOWN:
+            return active
+
         text = self._read_text(reader, selectors.PRODUCT_CONDITION)
         if text:
             parsed = ItemCondition.parse(text)
             if parsed is not ItemCondition.UNKNOWN:
                 return parsed
 
-        # Amazon omits the condition label entirely on a plain new offer from
-        # its own retail arm. Treating that as New requires the buybox to be
-        # present and to carry no used/renewed wording anywhere near it.
-        page_text = normalise_label(reader.page_text(limit=20_000)) or ""
-        if any(
-            phrase in page_text
-            for phrase in ("used - ", "renewed", "refurbished", "pre-owned", "open box")
-        ):
+        # A single-offer buy box states nothing at all when the offer is new.
+        # The absence of used wording is meaningful there, but only inside the
+        # buy box and only once the alternative offers have been taken out.
+        haystack = self._buy_box_text_without_alternatives(reader)
+        if haystack is None:
+            # Nothing that could be called a buy box: do not guess.
+            return ItemCondition.UNKNOWN
+        if any(phrase in haystack for phrase in selectors.USED_CONDITION_PHRASES):
             return ItemCondition.UNKNOWN
         if reader.exists(selectors.ADD_TO_CART_BUTTON) or reader.exists(
             selectors.BUY_NOW_BUTTON
         ):
             return ItemCondition.NEW
         return ItemCondition.UNKNOWN
+
+    @staticmethod
+    def _visible_text(locator: Any) -> str:
+        """The text a person would see, not the DOM's text content.
+
+        Amazon inlines a dozen ``<style>`` elements inside the buy-box
+        accordion rows, and ``text_content()`` returns their CSS along with
+        the caption. Everywhere else in this parser ``text_content`` is the
+        right choice -- it is what makes the offscreen price readable -- but
+        here the visible caption is precisely the thing being read.
+        """
+        for reader_name in ("inner_text", "text_content"):
+            try:
+                raw = getattr(locator, reader_name)(timeout=2_000)
+            except Exception:  # noqa: BLE001
+                continue
+            cleaned = normalise_label(raw)
+            if cleaned:
+                return cleaned
+        return ""
+
+    def _condition_from_active_offer(self, reader: PageReader) -> ItemCondition:
+        """Read the condition off the selected buy-box row, if there is one."""
+        locator, _ = reader.find(selectors.BUYBOX_ACTIVE_OFFER)
+        if locator is None:
+            return ItemCondition.UNKNOWN
+        caption = self._visible_text(locator)
+        if not caption:
+            return ItemCondition.UNKNOWN
+
+        # Used first: "Used - Like New" contains the word "new".
+        if any(phrase in caption for phrase in selectors.USED_CONDITION_PHRASES):
+            parsed = ItemCondition.parse(caption)
+            return parsed if parsed is not ItemCondition.UNKNOWN else ItemCondition.USED
+        if "buy new" in caption or caption.startswith("new"):
+            return ItemCondition.NEW
+        return ItemCondition.UNKNOWN
+
+    def _buy_box_text_without_alternatives(self, reader: PageReader) -> str | None:
+        """Buy-box text with the alternative-condition offers removed."""
+        box, _ = reader.find(selectors.BUY_BOX_CONTAINER)
+        if box is None:
+            return None
+        haystack = self._visible_text(box)
+        if not haystack:
+            return None
+        for candidate in selectors.ALTERNATIVE_OFFER_BLOCKS:
+            if not candidate.css:
+                continue
+            try:
+                blocks = reader.page.locator(candidate.css)
+                total = blocks.count()
+            except Exception:  # noqa: BLE001
+                continue
+            for index in range(min(total, 4)):
+                other = self._visible_text(blocks.nth(index))
+                if other:
+                    haystack = haystack.replace(other, " ")
+        return haystack
 
     def _read_max_quantity(self, reader: PageReader) -> int | None:
         locator, _ = reader.find(selectors.PRODUCT_QUANTITY_SELECT)

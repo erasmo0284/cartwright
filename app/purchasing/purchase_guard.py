@@ -22,9 +22,12 @@ money:
 
 from __future__ import annotations
 
+from typing import Sequence
+
 from app.core.errors import ErrorCode
 from app.core.money import Money
 from app.purchasing.models import (
+    CartLine,
     CartState,
     CheckoutSnapshot,
     ItemCondition,
@@ -444,9 +447,20 @@ class PurchaseGuard:
             # The ASIN check already reports this; avoid a duplicate failure.
             return check_not_applicable(CHECK_QUANTITY, "Quantity")
         if any(line.quantity is None for line in matching):
-            # Absent data fails. Reading no quantity is not the same as
-            # reading one, and treating it as one would validate a number
-            # nobody observed.
+            # Amazon's current checkout does not print a quantity at all when
+            # there is one of something -- confirmed on a live Buy Now order
+            # on 2026-09-16. Rather than fabricate the number, derive it from
+            # the money that *is* shown: the item subtotal must equal the unit
+            # price times the quantity the user asked for. Arithmetic that can
+            # only be satisfied by the right number is not a guess, and any
+            # discount or surprise makes it fail rather than pass.
+            derived = self._quantity_from_subtotal(rules, checkout, matching)
+            if derived is True:
+                return check_pass(
+                    CHECK_QUANTITY,
+                    "Quantity",
+                    actual=f"{expected} (confirmed from the item subtotal)",
+                )
             return check_fail(
                 CHECK_QUANTITY,
                 "Quantity",
@@ -455,7 +469,8 @@ class PurchaseGuard:
                 actual="could not be read",
                 detail=(
                     "Amazon's checkout did not show how many were being "
-                    "ordered, so it could not be confirmed."
+                    "ordered, and the item subtotal did not confirm it either, "
+                    "so it could not be established."
                 ),
             )
         actual = sum(line.units for line in matching)
@@ -468,6 +483,29 @@ class PurchaseGuard:
                 actual=str(actual),
             )
         return check_pass(CHECK_QUANTITY, "Quantity", actual=str(actual))
+
+    @staticmethod
+    def _quantity_from_subtotal(
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        matching: Sequence[CartLine],
+    ) -> bool:
+        """Whether the item subtotal is exactly the expected quantity's worth.
+
+        ``True`` only when every input was actually read and the arithmetic
+        is exact. Anything missing, any other line in the order, any currency
+        mismatch and any rounding difference gives ``False`` -- the caller
+        then fails the check, which is the direction that costs nothing.
+        """
+        subtotal = checkout.item_subtotal
+        if subtotal is None or len(matching) != 1 or len(checkout.lines) != 1:
+            return False
+        unit = matching[0].unit_price
+        if unit is None or unit.cents <= 0:
+            return False
+        if unit.currency != subtotal.currency:
+            return False
+        return unit.cents * rules.quantity == subtotal.cents
 
     def _check_prime(
         self, rules: PurchaseRules, product: ProductSnapshot

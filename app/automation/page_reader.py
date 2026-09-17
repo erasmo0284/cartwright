@@ -193,18 +193,31 @@ class PageReader:
         *,
         scope: Any | None = None,
         visible_only: bool = False,
+        visible_text: bool = False,
     ) -> Reading:
-        """Text content of the first match, whitespace-collapsed."""
+        """Text content of the first match, whitespace-collapsed.
+
+        ``visible_text`` reads what a person sees instead. The default is
+        right for prices, which Amazon hides in an offscreen span, and wrong
+        for anything Amazon builds from a template: the payment panel's
+        ``textContent`` is 462 characters of inline JSON wrapped around the
+        21 characters that say which card is being used.
+        """
         locator, resolution = self.find(
             chain, scope=scope, visible_only=visible_only
         )
         if locator is None:
             return Reading(None, None)
-        try:
-            raw = locator.text_content(timeout=2_000)
-        except Exception:  # noqa: BLE001
-            return Reading(None, resolution)
-        return Reading(clean(raw), resolution)
+        readers = ("inner_text", "text_content") if visible_text else ("text_content",)
+        for reader_name in readers:
+            try:
+                raw = getattr(locator, reader_name)(timeout=2_000)
+            except Exception:  # noqa: BLE001
+                continue
+            cleaned = clean(raw)
+            if cleaned:
+                return Reading(cleaned, resolution)
+        return Reading(None, resolution)
 
     def attribute(
         self, chain: SelectorChain, name: str, *, scope: Any | None = None

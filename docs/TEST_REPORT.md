@@ -6,8 +6,8 @@ PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 ## Summary
 
 ```
-1097 tests collected
-1029 passed, 68 skipped in 114s
+1132 tests collected
+1064 passed, 68 skipped in 172s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -145,6 +145,72 @@ so the test cannot be satisfied by logging nothing.
 | Every screen and dialog, light and dark | 30 PNGs in `docs/screens/`, reviewed individually |
 | Clean shutdown after the review fixes | Packaged app closed from its window: orderly shutdown, exit 0, **0** `chrome.exe` left |
 | Inline error hint, both themes | Captured and reviewed: red and semibold, not the muted grey of ordinary guidance |
+
+## Driven against live amazon.com
+
+On 2026-09-16 the application was run end to end against the real site, in
+Test Mode, on a signed-in account. Test Mode is enforced inside
+`CheckoutManager.submit`: the order button is located and reported, never
+clicked. **No order was placed at any point, and nothing was added to the
+user's cart** -- the item offered Buy Now, which is a separate one-item
+checkout.
+
+The final run passed every check:
+
+| Check | Result on the live page |
+|---|---|
+| Product | ASIN matched |
+| Version | Colour and size read from the picker |
+| Quantity | Not printed by Amazon at all; confirmed from the item subtotal |
+| Condition | New, from the active buy-box row |
+| Seller | Amazon.com |
+| Item price | At the limit |
+| Only your item | One line |
+| Order total | Read, and within the limit |
+| Delivery address | Read |
+| Payment method | Read (card, masked by Amazon to its last four digits) |
+| Order button | Located, and **not clicked** |
+
+Getting there took six defects, each found by the run and fixed:
+
+1. **Every new item was refused.** Amazon prints no condition for a new
+   offer, and the parser's "no used wording anywhere" heuristic found the
+   *used* offer Amazon advertises inside the same buy box. The condition now
+   comes from the active accordion row -- Amazon's own statement of which
+   offer is selected -- so "Buy New" reads as New.
+2. **Variations were not read.** Today's inline picker has no
+   `.a-form-label`; the label is a secondary-colour span and the value is
+   `.inline-twister-dim-title-value`. The old chain used the value as the
+   label, so it was discarded as an unrecognised dimension.
+3. **A phantom list price.** `.a-text-price` is also the class on the
+   per-unit price, so a $19.99 item reported a "was" price of $3.33. The
+   per-unit markers are excluded, and a list price at or below the real
+   price is now ignored.
+4. **The checkout could not be read at all.** Buy Now goes to Amazon's
+   current pipeline (`/checkout/p/...?pipelineType=Chewbacca`), whose summary
+   is a list rather than a table, whose address has its own element, whose
+   payment panel is mostly inline JSON, and whose line row is identified by a
+   class with a base64 id and carries its ASIN on a descendant. Every
+   selector for those was written for the older layout and matched nothing.
+5. **One order read as six line items**, because the `checkout-item-block`
+   ids wrap a promo panel, a title span and a gift-options link.
+6. **The suggested order limit could not survive tax.** It was the item
+   price exactly, so a $19.99 item with $1.45 of tax blocked on a limit the
+   user never chose. The suggestion now carries a 20% allowance, shown in
+   the editor where it can be lowered.
+
+Two findings that were not defects:
+
+* **Amazon asked for a security check during sign-in.** The app paused,
+  showed the browser and waited for the human, which is what it is built to
+  do. It then detected the signed-in session by itself.
+* **Buy Now does not open the Turbo iframe on this account.** That layout
+  exists and is still supported -- the tests drive a real cross-document
+  frame -- but it is not what Amazon served.
+
+The live layout is now covered by `TestCurrentCheckout` in
+`tests/integration/test_cart_and_checkout.py`, against a fixture copied from
+the real page, so none of the six can come back unnoticed.
 
 ## The Windows surface, checked on this machine
 

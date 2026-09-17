@@ -236,11 +236,19 @@ PRODUCT_PRICE_FRACTION: Final = chain(
     css(".priceToPay .a-price-fraction"),
 )
 
+#: The struck-through "was" price. ``.a-text-price`` alone is not it: Amazon
+#: gives the *per-unit* price ("$3.33 per pack") the same class, and a live
+#: page on 2026-09-16 was read as having a list price of $3.33 against a real
+#: price of $19.99. The per-unit markers are excluded explicitly.
 PRODUCT_LIST_PRICE: Final = chain(
     "list_price",
     css("#corePrice_feature_div .basisPrice .a-offscreen"),
     css("#corePriceDisplay_desktop_feature_div .basisPrice .a-offscreen"),
-    css("#centerCol .a-price.a-text-price .a-offscreen"),
+    css("#apex_desktop .basisPrice .a-offscreen"),
+    css(
+        "#centerCol .a-price.a-text-price:not(.apex-priceperunit-value)"
+        ":not(.pricePerUnit) .a-offscreen"
+    ),
     css(".priceBlockStrikePriceString"),
 )
 
@@ -432,6 +440,42 @@ BUY_BOX_CONTAINER: Final = chain(
     css("#desktop_buybox"),
     css("#buyBoxAccordion"),
     css("#rightCol", loose=True),
+)
+
+#: When Amazon has the item in more than one condition, the buy box becomes an
+#: accordion and the **active** row is the offer that would actually be bought.
+#: Checked against a live amazon.com page on 2026-09-16, where the buy box held
+#: an active "Buy New $19.99" row and a second "Used - Like New $16.00" row.
+#: Reading the active row is the only honest answer there: scanning the box for
+#: wording finds the used offer and concludes "condition not stated", which
+#: blocks a perfectly ordinary new item.
+BUYBOX_ACTIVE_OFFER: Final = chain(
+    "buybox_active_offer",
+    css("#buyBoxAccordion .a-accordion-active"),
+    css("#buybox .a-accordion-active"),
+    css("#newAccordionRow_0.a-accordion-active"),
+)
+
+#: The alternative-condition offers Amazon advertises inside the buy box. Their
+#: wording is about an offer the app is not buying, so it is removed from the
+#: text before any condition wording is looked for.
+ALTERNATIVE_OFFER_BLOCKS: Final = chain(
+    "alternative_offer_blocks",
+    css("#usedAccordionRow"),
+    css("#usedAccordionCaption_feature_div"),
+    css("#usedBuySection"),
+)
+
+#: Wording that means an offer is not new. ``"new"`` is deliberately absent:
+#: "Used - Like New" contains it, so a positive match on new must come from
+#: the active row's caption, never from a substring search.
+USED_CONDITION_PHRASES: Final[tuple[str, ...]] = (
+    "used - ",
+    "used -",
+    "renewed",
+    "refurbished",
+    "pre-owned",
+    "open box",
 )
 
 #: Wording that means Amazon is offering a recurring delivery. The backstop
@@ -635,16 +679,34 @@ PROMOTION_LABELS: Final[tuple[str, ...]] = (
     "gift card",
 )
 
+#: Rows of the order summary, deliberately leaf elements only. Checked on a
+#: live Buy Now checkout on 2026-09-16, where the pipeline is "Chewbacca" and
+#: the summary is a list -- ``<li class="a-spacing-mini">Items: $19.99</li>``
+#: and ``<li class="grand-total-cell">Order total: $21.44</li>`` -- not the
+#: table the older checkout used. A container that holds every row must never
+#: be matched: it classifies as "items" and then takes the largest price in
+#: it, which is the grand total.
 CHECKOUT_SUMMARY_ROWS: Final = (
     "#subtotals-marketplace-table tr, "
     "#subtotals tr, "
+    "#subtotals li, "
+    "#subtotals .order-summary-grid, "
+    ".grand-total-cell, "
     "#subtotals-marketplace-table .a-row, "
     "#order-summary .a-row, "
     "[data-testid='order-summary'] .a-row"
 )
 
+#: The delivery address. ``#deliver-to-address-text`` is the current
+#: checkout's own element and holds the address line by itself; the panel ids
+#: around it are kept as fallbacks, and the older layout's markup after that.
+#: Checked against a live Buy Now checkout on 2026-09-16, where none of the
+#: older candidates matched anything at all.
 CHECKOUT_ADDRESS: Final = chain(
     "checkout_address",
+    css("#deliver-to-address-text"),
+    css("#checkout-deliveryAddressPanel .a-color-base"),
+    css("#checkout-delivery-address-panel"),
     css("#addressList .a-color-base.a-text-bold"),
     css(".displayAddressDiv"),
     css("#shipToInsertionNode .displayAddressUL"),
@@ -655,6 +717,10 @@ CHECKOUT_ADDRESS: Final = chain(
 
 CHECKOUT_PAYMENT: Final = chain(
     "checkout_payment",
+    css("#selected-payment-methods-list-container"),
+    css("#selected-payment-method-_default"),
+    css("#checkout-paymentOptionPanel"),
+    css("#checkout-payment-option-panel"),
     css("#payment-information .a-color-base"),
     css("#paymentMethodDisplay"),
     css("[data-testid='payment-information']"),
@@ -687,7 +753,12 @@ CHECKOUT_LINE_PRICE: Final[tuple[str, ...]] = (
     ".a-price",
     ".a-color-price",
 )
+#: The node inside a checkout line that carries the item's ASIN. The current
+#: layout puts it on a descendant rather than on the line element itself.
+CHECKOUT_LINE_ASIN_NODE: Final = "[data-asin]"
+
 CHECKOUT_LINE_TITLE: Final[tuple[str, ...]] = (
+    ".lineitem-title-text",
     ".sc-product-title",
     ".a-size-base",
     "h4",
@@ -709,6 +780,15 @@ def cart_line_for(asin: str) -> str:
     return f"{CART_LINE_ITEMS}[data-asin='{candidate}']"
 
 
+#: One line of the order. ``.lineitem-container`` is the current layout's row
+#: -- its id is a base64 blob, so the class is the only stable handle. The
+#: ``checkout-item-block`` ids are deliberately **not** matched: they belong
+#: to the surrounding panel, the title span and even the "Add gift options"
+#: link, and matching them turned one order into six "line items".
+#:
+#: The row carries its ASIN on a descendant rather than on itself, which the
+#: reader handles; the Subscribe & Save upsell inside the row carries the
+#: same ASIN, so that costs nothing.
 CHECKOUT_LINE_ITEMS: Final = (
     "#spc-orders .a-fixed-left-grid, "
     "#huc-v2-order-row-items .a-fixed-left-grid, "
