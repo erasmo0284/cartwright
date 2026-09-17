@@ -22,6 +22,44 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _seed_thumbnails(context: object) -> int:
+    """Paint a stand-in thumbnail for every seeded product.
+
+    Deliberately a flat grey panel with a caption rather than anything that
+    could pass for a photograph: these captures go into ``docs/`` and get
+    shown to people, and a fake product photo in documentation is a lie
+    waiting to be quoted. What it does give is a filled picture box, so the
+    surrounding layout can be judged as a user will see it.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+
+    from app.automation.image_capture import thumbnail_path
+
+    paths = context.paths  # type: ignore[attr-defined]
+    paths.images_dir.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    for record in context.repositories.products.list_all():  # type: ignore[attr-defined]
+        pixmap = QPixmap(160, 160)
+        pixmap.fill(QColor("#d8d8d8"))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor("#8a8a8a"))
+        painter.drawRect(0, 0, pixmap.width() - 1, pixmap.height() - 1)
+        font = QFont()
+        font.setPointSize(11)
+        painter.setFont(font)
+        painter.drawText(
+            pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "product\nphoto"
+        )
+        painter.end()
+        if pixmap.save(
+            str(thumbnail_path(paths, record.asin, record.marketplace)), "PNG"
+        ):
+            written += 1
+    return written
+
+
 def _seed(context: object) -> None:
     """Fill the database with content that exercises every visual state."""
     from app.core.money import Money
@@ -431,6 +469,9 @@ def main(argv: list[str] | None = None) -> int:
     paths = AppPaths(root=data_dir).ensure()
     context = AppContext(paths=paths)
     _seed(context)
+
+    painted = _seed_thumbnails(context)
+    print(f"  (stand-in thumbnails painted for {painted} products)")
 
     theme = ThemeManager(application)
 

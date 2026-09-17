@@ -97,6 +97,11 @@ class BrowserSession:
         return self._worker.manager.page()
 
     @property
+    def paths(self) -> AppPaths:
+        """Where this run may cache things, such as a product thumbnail."""
+        return self._worker.manager.paths
+
+    @property
     def reader(self) -> PageReader:
         """A fresh reader for the current page.
 

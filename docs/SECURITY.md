@@ -110,6 +110,14 @@ requests of its own: `grep -rnE "requests\.|urllib\.request|httpx|aiohttp"` over
 `app/` returns nothing. All network traffic is the browser, doing what the
 user can see it doing.
 
+Product thumbnails are worth spelling out, because showing a picture is the
+sort of feature that usually smuggles in an HTTP client. It does not here:
+the browser has already loaded the image in order to display the page, so
+the thumbnail is a **screenshot of that element**
+(`app/automation/image_capture.py`). No request is made, nothing is fetched
+from an address the user did not visit, and the result is literally a picture
+of what was on their screen.
+
 ## Anti-bot boundary
 
 Deliberately absent, and this is a product decision rather than an
@@ -159,6 +167,11 @@ that machine is — by the user's Windows account.
 `.gitignore` excludes `browser/`, `*amazon-profile*`, `**/Default/Cookies*`,
 `data/`, `logs/` and the build output, so a profile cannot be committed even
 if `APB_DATA_DIR` were pointed inside the repository.
+
+Product thumbnails are cached in `images/`, one small PNG per product,
+photographed from the page as described above. Deleting the folder costs a
+placeholder until the next check. They are not included in the exported
+diagnostic report.
 
 Rolling backups of the database live in `backups/`, and a database that could
 not be opened is moved aside as `app.db.damaged` when the user accepts the

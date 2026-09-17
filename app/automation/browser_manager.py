@@ -109,6 +109,12 @@ class BrowserManager:
 
     # ---- installation ----------------------------------------------------
 
+
+    @property
+    def paths(self) -> AppPaths:
+        """The application's directories, for callers that cache alongside."""
+        return self._paths
+
     def chromium_installed(self) -> bool:
         """Whether a usable headed Chromium build is present."""
         return self.chromium_executable() is not None

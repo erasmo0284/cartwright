@@ -117,6 +117,16 @@ class AppPaths:
         return self.root / "screenshots"
 
     @property
+    def images_dir(self) -> Path:
+        """Product thumbnails, photographed from the page the browser showed.
+
+        A cache and nothing more: deleting it costs a placeholder until the
+        next check. Kept apart from ``screenshots_dir``, which holds
+        diagnostics of failures and is offered to the user for clearing.
+        """
+        return self.root / "images"
+
+    @property
     def backups_dir(self) -> Path:
         return self.root / "backups"
 
@@ -141,6 +151,7 @@ class AppPaths:
             self.playwright_browsers_dir,
             self.logs_dir,
             self.screenshots_dir,
+            self.images_dir,
             self.backups_dir,
             self.config_dir,
         )

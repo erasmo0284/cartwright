@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from app.purchasing.models import ProductSnapshot
 from app.ui.components.card import Card
 from app.ui.components.common import ElidingLabel, icon_set, role_label
+from app.ui.images import thumbnail
 
 _LOG: Final = logging.getLogger("app.ui.components.product_summary")
 
@@ -101,7 +102,14 @@ class ProductSummaryCard(Card):
     def set_product(
         self, snapshot: ProductSnapshot, image: QPixmap | None = None
     ) -> None:
-        """Render ``snapshot``, with ``image`` as the thumbnail when supplied."""
+        """Render ``snapshot``, with ``image`` as the thumbnail when supplied.
+
+        With no image, the one photographed from the product page during the
+        last check is used. Doing that here rather than at each call site is
+        deliberate: every screen that shows a product gets the picture
+        without having to remember to ask for it, and a product that has
+        never been checked still renders with the placeholder.
+        """
         self._snapshot = snapshot
         self._title.setText(snapshot.display_title)
         self.setAccessibleName(snapshot.display_title)
@@ -127,6 +135,8 @@ class ProductSummaryCard(Card):
             if visible:
                 value_label.setText(text)
 
+        if image is None:
+            image = thumbnail(snapshot.asin, snapshot.marketplace)
         self.set_image(image)
 
     def set_image(self, image: QPixmap | None) -> None:

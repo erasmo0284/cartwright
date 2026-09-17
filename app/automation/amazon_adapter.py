@@ -23,6 +23,7 @@ from app.automation.cart_manager import MANAGER as CART
 from app.automation.cart_manager import IsolationJournal, IsolationPlan
 from app.automation.checkout_manager import MANAGER as CHECKOUT
 from app.automation.checkout_manager import SubmitAuthorization
+from app.automation.image_capture import capture_thumbnail
 from app.automation.login_detector import DETECTOR, PageClassification, PageKind, SessionState
 from app.automation.page_reader import PageReader
 from app.automation.product_parser import PARSER
@@ -256,6 +257,15 @@ class AmazonAdapter:
                 ErrorCode.UNEXPECTED_PAGE,
                 context={"reason": "asin_not_readable", "requested": asin},
             )
+
+        # Photographed from the page the browser has already rendered, so the
+        # watch list and the confirmation dialog can show the product rather
+        # than the words "No image". Never allowed to affect the outcome: the
+        # snapshot is already complete by this point.
+        capture_thumbnail(
+            reader, session.paths, asin=snapshot.asin, marketplace=marketplace
+        )
+
         session.step("Done.")
         return snapshot
 

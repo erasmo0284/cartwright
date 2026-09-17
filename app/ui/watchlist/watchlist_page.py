@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -32,6 +33,7 @@ from app.core.timeutil import format_relative
 from app.database.records import WatchAction, WatchJobView, WatchStatus
 from app.database.repositories import ProductRepository, WatchRepository
 from app.ui.components import (
+    ElidingLabel,
     ButtonRow,
     Card,
     EmptyState,
@@ -43,9 +45,34 @@ from app.ui.components import (
     clear_layout,
 )
 from app.ui.components.badge import severity_for_watch_status
+from app.ui.images import thumbnail
 from app.ui.theme import StatusSeverity, font_body, font_title
 
 logger = logging.getLogger("app.ui.watchlist")
+
+#: The thumbnail box on a card. Fixed, so a row of cards does not shift as
+#: pictures of different shapes load.
+THUMBNAIL_SIZE = 72
+
+#: Shown when there is no picture yet. Words rather than an empty box: an
+#: empty box reads as a broken image.
+NO_IMAGE_TEXT = "No image"
+
+#: Label/value pairs across one row of the card's grid.
+GRID_PAIRS = 3
+
+#: Wide enough for the longest label ("Availability", "Last checked",
+#: "Failed checks") at 100% scaling. The three label-and-value pairs have to
+#: fit beside the picture and the status column inside a 1180px window, which
+#: is what caps these two numbers: wider, and the status badge and the price
+#: trend are pushed off the edge of the card.
+LABEL_COLUMN_WIDTH = 88
+
+#: And for the values beside them. Fixed rather than content-sized, because a
+#: long seller name ("XYZ Marketplace LLC") otherwise widens its own column
+#: and shoves every pair to its right out of line with the card above.
+#: Values that do not fit elide, and keep their full text in a tooltip.
+VALUE_COLUMN_WIDTH = 112
 
 
 class WatchlistPage(QWidget):
@@ -219,10 +246,10 @@ class _WatchCard(Card):
         top.setSpacing(12)
 
         self._image = QLabel()
-        self._image.setFixedSize(72, 72)
+        self._image.setFixedSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
         self._image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._image.setProperty("role", "caption")
-        self._image.setText("No image")
+        self._image.setText(NO_IMAGE_TEXT)
         top.addWidget(self._image, 0, Qt.AlignmentFlag.AlignTop)
 
         details = QWidget()
@@ -242,6 +269,15 @@ class _WatchCard(Card):
         self._grid = QGridLayout()
         self._grid.setHorizontalSpacing(18)
         self._grid.setVerticalSpacing(2)
+        # Fixed label columns and equal value columns, so every card in the
+        # list puts "Now", "Target" and "Availability" in the same place. Left
+        # to size themselves, each card measured its own text and the columns
+        # wandered from one card to the next.
+        for pair in range(GRID_PAIRS):
+            self._grid.setColumnMinimumWidth(pair * 2, LABEL_COLUMN_WIDTH)
+            self._grid.setColumnMinimumWidth(pair * 2 + 1, VALUE_COLUMN_WIDTH)
+            self._grid.setColumnStretch(pair * 2, 0)
+            self._grid.setColumnStretch(pair * 2 + 1, 1)
         details_layout.addLayout(self._grid)
 
         top.addWidget(details, 1)
@@ -333,12 +369,36 @@ class _WatchCard(Card):
 
         self._pause_button.setText("Resume" if self._paused else "Pause")
 
+        self._fill_image(view)
         self._fill_grid(view)
         self._fill_sparkline(view, series)
 
         summary = job.last_check_summary or "Not checked yet"
         self.setAccessibleName(
             f"{view.product.display_title}, {job.status.label}, {summary}"
+        )
+
+    def _fill_image(self, view: WatchJobView) -> None:
+        """Show the product's picture, or say there is not one.
+
+        The picture is whatever the last check photographed off the product
+        page; a product that has never been checked, or whose image could not
+        be captured, keeps the placeholder. Scaled with
+        :attr:`Qt.KeepAspectRatio` so a portrait photograph does not stretch.
+        """
+        picture = thumbnail(view.product.asin, view.product.marketplace)
+        if picture is None:
+            self._image.setPixmap(QPixmap())
+            self._image.setText(NO_IMAGE_TEXT)
+            return
+        self._image.setText("")
+        self._image.setPixmap(
+            picture.scaled(
+                THUMBNAIL_SIZE,
+                THUMBNAIL_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         )
 
     def _fill_grid(self, view: WatchJobView) -> None:
@@ -377,9 +437,11 @@ class _WatchCard(Card):
             key = QLabel(label)
             key.setProperty("role", "caption")
             self._grid.addWidget(key, row, column)
-            shown = QLabel(value)
+            # Eliding, not wrapping or growing: the column is a fixed width
+            # so the cards line up, and a value too long for it is shortened
+            # with its full text kept in the tooltip.
+            shown = ElidingLabel(value)
             shown.setFont(font_body())
-            shown.setWordWrap(False)
             self._grid.addWidget(shown, row, column + 1)
 
         if job.last_check_summary:
