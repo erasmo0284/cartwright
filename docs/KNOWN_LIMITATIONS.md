@@ -55,8 +55,11 @@ file when Amazon changes.
 - **Turbo Checkout** (the Buy Now modal in an iframe) is implemented against
   documented identifiers but has never been exercised. If it misbehaves, the
   guard's "order button located" check fails and nothing is ordered.
-- **Prime eligibility is not reliably detectable.** The parser returns
-  "unknown" rather than guessing. A rule requiring Prime therefore *blocks*
+- **Prime eligibility is not reliably detectable.** Amazon renders the badge
+  inconsistently, and a page-wide match is as likely to be an advert as this
+  offer -- a live item with $4.49 postage read as Prime until the page-wide
+  candidates were marked loose. The parser returns "unknown" rather than
+  guessing. A rule requiring Prime therefore *blocks*
   when eligibility cannot be established, which is safe but may be
   surprising. It is off by default.
 - **Digital goods, subscriptions, pre-orders and add-on items** are untested

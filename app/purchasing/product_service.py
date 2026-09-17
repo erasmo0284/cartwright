@@ -9,6 +9,7 @@ spends money.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -19,7 +20,7 @@ from app.automation.amazon_adapter import ADAPTER
 from app.automation.browser_worker import BrowserSession, BrowserWorker, Priority
 from app.config import SettingsService
 from app.core.errors import AppError, ErrorCode
-from app.core.money import Money
+from app.core.money import Money, parse_money
 from app.database.records import (
     ActivityCategory,
     ActivitySeverity,
@@ -75,8 +76,37 @@ def parse_product_reference(text: str | None) -> tuple[str, str]:
 ORDER_TOTAL_ALLOWANCE_PERCENT: Final = 20
 
 
-def suggest_order_total(price: Money | None, quantity: int) -> Money | None:
-    """A starting order-total limit: the line cost plus an allowance.
+#: "$4.49 delivery October 14 - 29" -- a delivery charge Amazon has already
+#: named on the product page. Anchored at the start and required to be
+#: immediately before the word, because the same field also says "FREE
+#: delivery ... on orders over $25", and reading that $25 as postage would
+#: raise the suggested limit by the one number that is not a cost.
+_DELIVERY_COST = re.compile(r"^\$?([\d,]+\.\d{2})\s+(?:delivery|shipping)", re.IGNORECASE)
+
+
+def shipping_from_delivery_estimate(text: str | None) -> Money | None:
+    """The delivery charge stated on the product page, if it names one."""
+    if not text:
+        return None
+    cleaned = text.strip()
+    if cleaned.lower().startswith("free"):
+        return None
+    match = _DELIVERY_COST.match(cleaned)
+    if not match:
+        return None
+    return parse_money(match.group(0))
+
+
+def suggest_order_total(
+    price: Money | None, quantity: int, shipping: Money | None = None
+) -> Money | None:
+    """A starting order-total limit: the line cost, postage, and an allowance.
+
+    The allowance is for tax, which cannot be known before the checkout. A
+    delivery charge *can* be known -- Amazon states it on the product page --
+    so it is added rather than left to eat the allowance: a live rehearsal of
+    a $26.99 item with $4.49 postage and $2.29 of tax came to $33.77 against a
+    suggested limit of $32.39, and blocked on a limit the user never chose.
 
     Rounded up, so the suggestion is never a cent below what it means to
     allow. Returns ``None`` when there is no price to work from -- the guard
@@ -87,7 +117,10 @@ def suggest_order_total(price: Money | None, quantity: int) -> Money | None:
     line = price.cents * max(1, quantity)
     padded = line * (100 + ORDER_TOTAL_ALLOWANCE_PERCENT)
     # Ceiling division: an allowance that rounds down is not the allowance.
-    return Money(-(-padded // 100), price.currency)
+    total = -(-padded // 100)
+    if shipping is not None and shipping.currency == price.currency:
+        total += shipping.cents
+    return Money(total, price.currency)
 
 
 def suggest_rules(
@@ -116,7 +149,11 @@ def suggest_rules(
         quantity=quantity,
         currency=snapshot.currency,
         max_item_price=price,
-        max_order_total=suggest_order_total(price, quantity),
+        max_order_total=suggest_order_total(
+            price,
+            quantity,
+            shipping_from_delivery_estimate(snapshot.delivery_estimate),
+        ),
         seller_policy=default_seller_policy,
         condition_policy=default_condition_policy,
         expected_variation=snapshot.variation,

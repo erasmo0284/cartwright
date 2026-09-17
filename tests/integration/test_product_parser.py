@@ -232,6 +232,29 @@ class TestProductPage:
         )
         assert black.variation.fingerprint != red.variation.fingerprint
 
+    def test_a_prime_badge_outside_the_buy_box_is_not_taken_as_prime(
+        self, load
+    ) -> None:
+        """A page-wide icon match is an advert as often as it is this offer.
+
+        Live, an item with $4.49 postage and a month's delivery read as Prime
+        because some Prime icon existed somewhere on the page. "Could not
+        tell" is the honest answer, and it blocks when a rule requires Prime
+        instead of quietly satisfying it.
+        """
+        page = pages.product_page(prime=False).replace(
+            "</body>",
+            '<div id="some-advert"><i class="a-icon a-icon-prime"></i>'
+            "Prime Store Card</div></body>",
+        )
+        reader = load(PRODUCT_URL, page)
+        snapshot = PARSER.parse(reader)
+        assert snapshot.prime_eligible is None
+
+    def test_a_prime_badge_in_the_buy_box_is_taken_as_prime(self, load) -> None:
+        reader = load(PRODUCT_URL, pages.product_page(prime=True))
+        assert PARSER.parse(reader).prime_eligible is True
+
     def test_limited_quantity_is_read(self, load) -> None:
         reader = load(PRODUCT_URL, pages.product_page(max_quantity=3))
         snapshot = PARSER.parse(reader)

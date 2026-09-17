@@ -840,6 +840,76 @@ class TestRecovery:
 
 
 # ---------------------------------------------------------------------------
+# The suggested order-total limit
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestedOrderTotal:
+    """The limit a user gets if they accept the defaults.
+
+    It has to be high enough that an ordinary purchase is not refused on
+    arithmetic nobody chose, and low enough to still mean something. Both
+    numbers here come from live rehearsals that blocked.
+    """
+
+    def test_it_leaves_room_for_tax(self) -> None:
+        from app.purchasing.product_service import suggest_order_total
+
+        # $19.99 + $1.45 tax = $21.44 live, against $19.99 suggested before.
+        suggested = suggest_order_total(usd("19.99"), 1)
+        assert suggested is not None
+        assert suggested >= usd("21.44")
+
+    def test_it_adds_a_delivery_charge_amazon_already_named(self) -> None:
+        from app.purchasing.product_service import suggest_order_total
+
+        # $26.99 + $4.49 postage + $2.29 tax = $33.77 live.
+        suggested = suggest_order_total(usd("26.99"), 1, usd("4.49"))
+        assert suggested is not None
+        assert suggested >= usd("33.77")
+
+    def test_it_scales_with_quantity(self) -> None:
+        from app.purchasing.product_service import suggest_order_total
+
+        one = suggest_order_total(usd("10.00"), 1)
+        three = suggest_order_total(usd("10.00"), 3)
+        assert one is not None and three is not None
+        assert three.cents == one.cents * 3
+
+    def test_no_price_means_no_suggestion(self) -> None:
+        from app.purchasing.product_service import suggest_order_total
+
+        assert suggest_order_total(None, 1) is None
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("$4.49 delivery October 14 - 29. Details", "4.49"),
+            ("$12.99 shipping", "12.99"),
+            ("FREE delivery Thursday, September 24", None),
+            # The trap: this names $25 as a threshold, not as postage.
+            (
+                "FREE delivery Overnight 7 AM - 11 AM on qualifying orders "
+                "over $25. Order within 9 hrs",
+                None,
+            ),
+            ("Arriving tomorrow", None),
+            (None, None),
+        ],
+    )
+    def test_the_delivery_charge_is_read_only_when_it_is_one(
+        self, text: str | None, expected: str | None
+    ) -> None:
+        from app.purchasing.product_service import shipping_from_delivery_estimate
+
+        found = shipping_from_delivery_estimate(text)
+        if expected is None:
+            assert found is None
+        else:
+            assert found == usd(expected)
+
+
+# ---------------------------------------------------------------------------
 # The pre-checkout guard phase
 # ---------------------------------------------------------------------------
 

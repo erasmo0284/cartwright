@@ -423,8 +423,14 @@ class ProductParser:
         are inconsistently rendered, and the guard treats "required but
         undeterminable" as a block rather than assuming either way.
         """
-        if reader.exists(selectors.PRIME_BADGE):
+        locator, resolution = reader.find(selectors.PRIME_BADGE)
+        if locator is not None and resolution is not None and not resolution.loose:
             return True
+        if locator is not None:
+            # A badge somewhere on the page, but not in the buy box or the
+            # delivery block. That is an advert as often as it is this offer.
+            logger.info("A Prime badge matched only loosely; reporting unknown")
+            return None
         page_text = normalise_label(reader.page_text(limit=20_000)) or ""
         if "prime" in page_text:
             # The word appears in navigation and adverts on every page, so its

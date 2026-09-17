@@ -6,8 +6,8 @@ PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 ## Summary
 
 ```
-1146 tests collected
-1078 passed, 68 skipped in 163s
+1160 tests collected
+1092 passed, 68 skipped in 181s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -282,6 +282,42 @@ row -- including the seller substitution that used to pass.
 
 Re-run live, the third-party purchase passes every check, identified by name,
 with "Seller on the order: Aproca Direct" confirmed from the order itself.
+
+### An order that charges postage
+
+Every order so far had free delivery, so the shipping row had never carried a
+value. The fifth rehearsal used a $26.99 item with **$4.49 delivery**. The
+summary parsed exactly -- $26.99 + $4.49 + $2.29 tax = $33.77 -- and three
+more things came out of it.
+
+**The brand goes in front of the title.** The product page read "GQZMBM 16
+Pcs/lot ..." and the checkout line read "JINSUO GQZMBM 16 Pcs/lot ...", so
+the name match failed and the order was refused. The identity check now also
+accepts the title with this product's brand prefixed -- a second exact form,
+not a prefix rule, so "Case for <title>" and "Acme <title>" both still fail.
+
+**The suggested order limit did not cover postage.** $33.77 against a
+suggested $32.39: the 20% allowance covers tax but not tax plus delivery, so
+a user accepting the defaults would have every such purchase refused. Amazon
+states the delivery charge on the product page, so the suggestion now adds
+it. The parsing is deliberately narrow -- a price immediately before the word
+"delivery" or "shipping", and never when the text begins "FREE" -- because
+the same field also says "FREE delivery ... on orders over $25", and reading
+that $25 as postage would raise the limit by the one number in it that is not
+a cost.
+
+**Prime was reported for an item that plainly is not Prime.** A page-wide
+`i.a-icon-prime` candidate matched an advert's icon, so a $4.49-postage item
+arriving in a month read as Prime-eligible. Under the default rules nothing
+uses that field, but a user who switches on "Prime only" would have had the
+rule quietly satisfied by an advert. The page-wide candidates are marked
+loose now, and a loose match reports "could not tell", which *blocks* when
+Prime is required.
+
+Re-run live, that order passes every check: identified by name against the
+brand-prefixed title, postage inside the suggested limit, and Prime reported
+as unknown rather than as yes.
+
 
 
 ## The Windows surface, checked on this machine

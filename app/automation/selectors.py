@@ -341,12 +341,21 @@ PRODUCT_DELIVERY_ESTIMATE: Final = chain(
     css("#ddmDeliveryMessage"),
 )
 
+#: Prime eligibility, and a lesson in scope. A page-wide ``i.a-icon-prime``
+#: matches the icon in adverts and cross-sell strips: a live item with $4.49
+#: postage and a month's delivery read as Prime because of one. The
+#: page-wide candidates are marked loose, and the parser treats a loose match
+#: as "could not tell" rather than as a yes -- which blocks when a rule
+#: requires Prime, instead of quietly satisfying it.
 PRIME_BADGE: Final = chain(
     "prime_badge",
     css("#primeBadge_feature_div i.a-icon-prime"),
     css("#delivery-block i.a-icon-prime"),
-    css("i.a-icon-prime"),
-    css(".prime-badge"),
+    css("#deliveryBlockMessage i.a-icon-prime"),
+    css("#mir-layout-DELIVERY_BLOCK i.a-icon-prime"),
+    css("#buybox i.a-icon-prime"),
+    css("i.a-icon-prime", loose=True),
+    css(".prime-badge", loose=True),
 )
 
 #: The variation picker. Both the legacy twister and the newer inline rows are

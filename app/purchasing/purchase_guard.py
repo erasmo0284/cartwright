@@ -296,7 +296,20 @@ class PurchaseGuard:
             return False
         expected_title = normalise_label(product.title)
         actual_title = normalise_label(line.title)
-        return bool(expected_title) and expected_title == actual_title
+        if not expected_title or not actual_title:
+            return False
+        if expected_title == actual_title:
+            return True
+
+        # Amazon's checkout puts the brand in front of the title for some
+        # items -- a live order on 2026-09-16 showed "JINSUO GQZMBM 16
+        # Pcs/lot ..." against a product page reading "GQZMBM 16 Pcs/lot
+        # ...". Still an equality, against a second exact form, rather than
+        # a prefix rule: "Case for <title>" must keep failing.
+        brand = normalise_label(product.brand)
+        if brand and actual_title == f"{brand} {expected_title}":
+            return True
+        return False
 
     def _check_variation(
         self, rules: PurchaseRules, product: ProductSnapshot

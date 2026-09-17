@@ -229,6 +229,59 @@ class TestIdentityWithoutAnItemCode:
         check = next(c for c in report.checks if c.check_id == CHECK_ASIN)
         assert "matched by name" in (check.actual or "")
 
+    def test_a_brand_prefixed_title_is_accepted(
+        self, rules, product, checkout
+    ) -> None:
+        """Amazon's checkout puts the brand in front of the title for some items.
+
+        Live, a page reading "GQZMBM 16 Pcs/lot ..." produced a checkout line
+        reading "JINSUO GQZMBM 16 Pcs/lot ...". Still matched as an equality
+        against a second exact form, not as a prefix rule.
+        """
+        branded_product = ProductSnapshot(
+            **{**product.__dict__, "brand": "Klein Tools"}
+        )
+        branded = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=None,
+                        title=f"Klein Tools {product.title}",
+                        quantity=None,
+                        unit_price=usd("109.97"),
+                    ),
+                ),
+            }
+        )
+        report = GUARD.check_final(rules, branded_product, branded)
+        assert status_of(report, CHECK_ASIN) is CheckStatus.PASS
+        assert report.passed, report.summary
+
+    def test_another_brands_prefix_is_refused(
+        self, rules, product, checkout
+    ) -> None:
+        """Only *this* product's brand, not any word in front of the title."""
+        branded_product = ProductSnapshot(
+            **{**product.__dict__, "brand": "Klein Tools"}
+        )
+        wrong = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=None,
+                        title=f"Acme {product.title}",
+                        quantity=None,
+                        unit_price=usd("109.97"),
+                    ),
+                ),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, branded_product, wrong), CHECK_ASIN
+        ) is CheckStatus.FAIL
+
     def test_a_different_title_is_refused(self, rules, product, checkout) -> None:
         """This is the whole point: a substituted item has a different name."""
         wrong = self._unlabelled(checkout, product)
