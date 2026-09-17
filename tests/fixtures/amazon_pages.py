@@ -683,6 +683,7 @@ def current_checkout_page(
     show_quantity: int | None = None,
     subscribe_and_save_upsell: bool = True,
     place_order_button: bool = True,
+    third_party_seller: str | None = None,
 ) -> str:
     """Amazon's current checkout, as served for a Buy Now order.
 
@@ -710,13 +711,32 @@ def current_checkout_page(
         else ""
     )
 
+    # The only ``data-asin`` on an Amazon-sold checkout is the one this
+    # upsell happens to carry. A third-party order has none at all, which is
+    # why ``third_party_seller`` turns it off: that page is the one where the
+    # item has to be identified by name.
     upsell = (
         f"""
         <div id="sns-item-v2-0" class="a-section" data-asin="{asin}">
           <span>Subscribe &amp; Save: Save up to 5% on future auto-deliveries</span>
         </div>
         """
-        if subscribe_and_save_upsell
+        if subscribe_and_save_upsell and not third_party_seller
+        else ""
+    )
+
+    # "Ships from Amazon.com Sold by <name>", with the seller's profile link,
+    # exactly as the live third-party line renders it.
+    sold_by = (
+        f"""
+        <div class="a-row">
+          <span>Ships from Amazon.com</span>
+          <span>Sold by</span>
+          <a href="/sp?marketplaceID=ATVPDKIKX0DER&amp;seller=A12RCUJWIG1IBN"
+             class="a-link-normal">{third_party_seller}</a>
+        </div>
+        """
+        if third_party_seller
         else ""
     )
 
@@ -777,13 +797,14 @@ def current_checkout_page(
             <span>Arriving tomorrow</span>
             <div id="{CURRENT_LINE_ID}"
                  class="a-box a-spacing-top-base lineitem-container checkout-card-content">
-              <div class="a-fixed-left-grid" data-asin="{asin}">
+              <div class="a-fixed-left-grid"{f' data-asin="{asin}"' if not third_party_seller else ''}>
                 <span id="checkout-item-block-item-primary-title-{CURRENT_LINE_ID}"
                       class="lineitem-title-text break-word">{title}</span>
                 <span class="a-price apex-price-to-pay-value">
                   <span class="a-offscreen">${item_price}</span>
                 </span>
                 {quantity_markup}
+                {sold_by}
               </div>
               {upsell}
             </div>

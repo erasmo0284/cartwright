@@ -190,6 +190,176 @@ class TestWrongItem:
         assert not GUARD.check_final(rules, product, empty).passed
 
 
+class TestIdentityWithoutAnItemCode:
+    """Amazon's current checkout usually prints no ASIN on the line.
+
+    A live third-party order on 2026-09-16 carried none at all: no
+    ``data-asin``, no product link, nothing but a line-item id and the
+    seller. The Amazon-sold order that passed earlier only had one because a
+    Subscribe & Save upsell inside the row happened to include it.
+
+    So the title is used -- narrowly. Everything in this class is about the
+    boundary of that fallback, because it is the one place the guard accepts
+    something weaker than an exact code.
+    """
+
+    def _unlabelled(self, checkout, product, **overrides):
+        """The checkout as Amazon serves it: one line, no code, real title."""
+        line = CartLine(
+            asin=None,
+            title=product.title,
+            quantity=None,
+            unit_price=usd("109.97"),
+        )
+        fields = {**checkout.__dict__, "lines": (line,), **overrides}
+        return CheckoutSnapshot(**fields)
+
+    def test_one_unlabelled_line_matching_the_title_is_accepted(
+        self, rules, product, checkout
+    ) -> None:
+        report = GUARD.check_final(rules, product, self._unlabelled(checkout, product))
+        assert status_of(report, CHECK_ASIN) is CheckStatus.PASS
+        assert report.passed, report.summary
+
+    def test_the_acceptance_says_how_the_item_was_identified(
+        self, rules, product, checkout
+    ) -> None:
+        """The user is told the code was not shown, not left to assume it was."""
+        report = GUARD.check_final(rules, product, self._unlabelled(checkout, product))
+        check = next(c for c in report.checks if c.check_id == CHECK_ASIN)
+        assert "matched by name" in (check.actual or "")
+
+    def test_a_different_title_is_refused(self, rules, product, checkout) -> None:
+        """This is the whole point: a substituted item has a different name."""
+        wrong = self._unlabelled(checkout, product)
+        wrong = CheckoutSnapshot(
+            **{
+                **wrong.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=None,
+                        title="Something else entirely",
+                        quantity=None,
+                        unit_price=usd("109.97"),
+                    ),
+                ),
+            }
+        )
+        report = GUARD.check_final(rules, product, wrong)
+        assert status_of(report, CHECK_ASIN) is CheckStatus.FAIL
+        assert not report.passed
+
+    def test_a_title_that_only_starts_the_same_is_refused(
+        self, rules, product, checkout
+    ) -> None:
+        """Equality, not a prefix: accessories are named after their product."""
+        near = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin=None,
+                        title=f"Case for {product.title}",
+                        quantity=None,
+                        unit_price=usd("109.97"),
+                    ),
+                ),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, near), CHECK_ASIN
+        ) is CheckStatus.FAIL
+
+    def test_a_missing_title_is_refused(self, rules, product, checkout) -> None:
+        blank = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(asin=None, title=None, quantity=None, unit_price=usd("109.97")),
+                ),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, blank), CHECK_ASIN
+        ) is CheckStatus.FAIL
+
+    def test_a_second_line_refuses_the_whole_thing(
+        self, rules, product, checkout
+    ) -> None:
+        """With two lines, nothing can be identified by elimination."""
+        two = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(asin=None, title=product.title, quantity=None,
+                             unit_price=usd("109.97")),
+                    CartLine(asin=None, title="Dog food", quantity=None,
+                             unit_price=usd("30.00")),
+                ),
+            }
+        )
+        report = GUARD.check_final(rules, product, two)
+        assert status_of(report, CHECK_ASIN) is CheckStatus.FAIL
+        assert not report.passed
+
+    def test_a_line_bearing_someone_elses_code_is_refused(
+        self, rules, product, checkout
+    ) -> None:
+        """A wrong code is a different item, not an unlabelled one.
+
+        Without this, an item whose page title happened to match would be
+        accepted *despite* Amazon stating a different ASIN for it.
+        """
+        labelled = CheckoutSnapshot(
+            **{
+                **checkout.__dict__,
+                "lines": (
+                    CartLine(
+                        asin="B0OTHERITEM",
+                        title=product.title,
+                        quantity=1,
+                        unit_price=usd("109.97"),
+                    ),
+                ),
+            }
+        )
+        assert status_of(
+            GUARD.check_final(rules, product, labelled), CHECK_ASIN
+        ) is CheckStatus.FAIL
+
+    def test_the_price_and_quantity_checks_see_the_identified_line(
+        self, rules, product, checkout
+    ) -> None:
+        """Identification has to reach the other checks, or they contradict it.
+
+        Before this, the ASIN check passed by title while the price check
+        reported "not shown at checkout" and the item counted as foreign --
+        three checks disagreeing about the same line.
+        """
+        report = GUARD.check_final(rules, product, self._unlabelled(checkout, product))
+        assert status_of(report, CHECK_MAX_ITEM_PRICE) is CheckStatus.PASS
+        assert status_of(report, CHECK_QUANTITY) is CheckStatus.PASS
+        assert status_of(report, CHECK_CART_CONTENTS) is CheckStatus.PASS
+
+    def test_an_over_limit_price_still_blocks_on_an_unlabelled_line(
+        self, rules, product, checkout
+    ) -> None:
+        """Identifying the line must not soften what is checked about it."""
+        dear = self._unlabelled(
+            checkout,
+            product,
+            lines=(
+                CartLine(
+                    asin=None, title=product.title, quantity=None,
+                    unit_price=usd("500.00"),
+                ),
+            ),
+        )
+        report = GUARD.check_final(rules, product, dear)
+        assert status_of(report, CHECK_MAX_ITEM_PRICE) is CheckStatus.FAIL
+        assert not report.passed
+
+
 class TestWrongVariation:
     def test_changed_variation_blocks(self, rules, product) -> None:
         wrong = ProductSnapshot(

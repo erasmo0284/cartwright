@@ -23,9 +23,11 @@ from app.core.money import Money
 from app.purchasing.models import (
     Availability,
     CartStrategy,
+    ConditionPolicy,
     ItemCondition,
     ProductSnapshot,
     PurchaseRules,
+    SellerPolicy,
     VariationSnapshot,
 )
 from app.purchasing.purchase_guard import CHECK_CART_QUANTITY, GUARD
@@ -724,6 +726,94 @@ class TestCurrentCheckout:
         snapshot = CHECKOUT.read_checkout(reader)
         report = GUARD.check_final(rules, product, snapshot)
         assert not report.passed
+
+    def test_a_third_party_line_carries_no_item_code_but_names_its_seller(
+        self, load
+    ) -> None:
+        """What a live third-party Buy Now order actually looks like.
+
+        No ``data-asin`` anywhere in the row -- not on the line, not on a
+        descendant, not in a product link. What it does carry is the seller,
+        in words and as a profile link, which is the check that matters most
+        when an approved-seller rule is what let this seller through.
+        """
+        reader = load(
+            self.CURRENT_URL,
+            pages.current_checkout_page(third_party_seller="Aproca Direct"),
+        )
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert len(snapshot.lines) == 1
+        line = snapshot.lines[0]
+        assert line.asin is None, "Amazon printed no item code"
+        assert line.title is not None and "Klein" in line.title
+        assert line.seller == "Aproca Direct", "the seller is on the line"
+        assert snapshot.order_total == usd("21.44")
+
+    def test_an_approved_seller_order_with_no_item_code_is_authorised(
+        self, load, product
+    ) -> None:
+        """The purchase an approved-seller rule exists to allow.
+
+        Identified by name because Amazon showed no code, with the seller on
+        the order line checked against the approved list -- which is the
+        compensating control for the weaker identity.
+        """
+        reader = load(
+            self.CURRENT_URL,
+            pages.current_checkout_page(
+                third_party_seller="Aproca Direct",
+                item_price="109.97",
+                item_subtotal="109.97",
+                tax="7.97",
+                order_total="117.94",
+            ),
+        )
+        snapshot = CHECKOUT.read_checkout(reader)
+        third_party = replace(
+            product, seller="Aproca Direct", ships_from="Amazon.com"
+        )
+        approved = PurchaseRules(
+            expected_asin=ASIN,
+            quantity=1,
+            max_item_price=usd("120.00"),
+            max_order_total=usd("135.00"),
+            seller_policy=SellerPolicy.APPROVED_LIST,
+            approved_sellers=("Aproca Direct",),
+            condition_policy=ConditionPolicy.NEW_ONLY,
+            expected_address_label=snapshot.address_label,
+            expected_payment_label=snapshot.payment_label,
+        )
+        report = GUARD.check_final(approved, third_party, snapshot)
+        assert report.passed, report.summary
+
+    def test_a_seller_off_the_approved_list_blocks_at_the_order_line(
+        self, load, product
+    ) -> None:
+        """The product page said one seller; the order says another.
+
+        This is the substitution the checkout-seller check exists for, and it
+        only works because the seller is now read from the line.
+        """
+        reader = load(
+            self.CURRENT_URL,
+            pages.current_checkout_page(third_party_seller="Somebody Else"),
+        )
+        snapshot = CHECKOUT.read_checkout(reader)
+        approved = PurchaseRules(
+            expected_asin=ASIN,
+            quantity=1,
+            max_item_price=usd("120.00"),
+            max_order_total=usd("135.00"),
+            seller_policy=SellerPolicy.APPROVED_LIST,
+            approved_sellers=("Aproca Direct",),
+            condition_policy=ConditionPolicy.NEW_ONLY,
+        )
+        report = GUARD.check_final(
+            approved, replace(product, seller="Aproca Direct"), snapshot
+        )
+        assert not report.passed
+        assert report.blocked_code is ErrorCode.SELLER_NOT_ALLOWED
 
     def test_the_order_button_is_found_on_the_current_layout(self, load) -> None:
         reader = load(self.CURRENT_URL, pages.current_checkout_page())

@@ -70,6 +70,14 @@ file when Amazon changes.
   the *description* of what is being bought, not the identity of it. Since
   1.0.0 the app notices this case and says so on the rules screen, rather
   than letting the user assume the version was recorded.
+- **Amazon does not print the item code on its current checkout**, so the
+  app confirms the order holds the right item by matching its *name* against
+  the product page it read moments earlier -- exactly one line, no code on
+  it, and an exact title match, or it refuses. The item code is still checked
+  everywhere Amazon does publish it, and the seller on the order line, the
+  item price, the order total and the delivery address are all still checked
+  independently. It is weaker than a code comparison, and it is the honest
+  limit of what that page offers.
 - **The `Amazon or the manufacturer` seller rule trusts the brand name the
   product page showed when you created the rule.** It is stored at that
   moment and never refreshed, so a later change to the page cannot widen what

@@ -6,8 +6,8 @@ PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 ## Summary
 
 ```
-1134 tests collected
-1066 passed, 68 skipped in 169s
+1146 tests collected
+1078 passed, 68 skipped in 163s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -243,6 +243,45 @@ yields nothing means the reader can walk into the *heading* above the value,
 and a fixture caught it immediately -- an empty address element started
 reading as "Shipping address". Headings are now rejected as values for both
 the address and the payment method, with a test for each.
+
+### A third-party purchase, and what it revealed about identity
+
+The fourth rehearsal used an **approved-seller rule** -- the rule that exists
+precisely so a non-Amazon seller can be bought from, and therefore the one
+where a mis-read seller does real damage. It passed, but only after two
+findings that change what the guard can claim.
+
+**Amazon's checkout does not print the item code.** The third-party order
+carried no `data-asin` anywhere in the line: not on the row, not on a
+descendant, not in a product link. Only a line-item id, a quantity-update URL
+and the seller's profile link. Worse, this means the earlier "full pass" was
+luckier than it looked -- that order had an ASIN only because a Subscribe &
+Save upsell inside the row happened to carry one. Without it, no purchase on
+this layout could ever have been authorised.
+
+The guard now identifies the line by **name** when there is no code, and the
+fallback is deliberately narrow: exactly one line in the whole order, that
+line carrying no code of its own, and its title equal to the product page's
+title once normalised. A second line, a line bearing a different code, a
+missing title or a title that merely *starts* the same all fail. The report
+says which happened -- "matched by name; Amazon did not show the item code"
+-- rather than letting the user assume the code was checked.
+
+**The check that compensates for it was skipping.** "Seller on the order"
+exists because the buybox can change hands between reading the product page
+and reaching the checkout, and it is the strongest control left when identity
+rests on a name. It was reading `lines_for(asin)`, which is empty when there
+is no ASIN, so it skipped -- and a fixture proved the consequence: an order
+whose line named a seller **not** on the approved list passed the guard. It
+now reads the line the identity check resolved, and that order blocks with
+`SELLER_NOT_ALLOWED`.
+
+Both are covered: nine unit tests on the boundary of the name fallback, and
+three integration tests against a third-party fixture copied from the live
+row -- including the seller substitution that used to pass.
+
+Re-run live, the third-party purchase passes every check, identified by name,
+with "Seller on the order: Aproca Direct" confirmed from the order itself.
 
 
 ## The Windows surface, checked on this machine

@@ -797,9 +797,31 @@ CHECKOUT_LINE_PRICE: Final[tuple[str, ...]] = (
     ".a-price",
     ".a-color-price",
 )
-#: The node inside a checkout line that carries the item's ASIN. The current
-#: layout puts it on a descendant rather than on the line element itself.
+#: The node inside a checkout line that carries the item's ASIN.
+#:
+#: On the current checkout there usually is not one. A live third-party order
+#: on 2026-09-16 had no ``data-asin`` anywhere in the row -- only a line-item
+#: id, a quantity-update URL and the seller's link -- and the Amazon-sold
+#: order only had one because a Subscribe & Save upsell inside the row
+#: happened to carry it. The guard therefore has to be able to identify a
+#: line without an item code; see ``_check_asin_in_checkout``.
 CHECKOUT_LINE_ASIN_NODE: Final = "[data-asin]"
+
+#: Who is selling one line of the order. The seller's profile link is the
+#: reliable handle on the current checkout: its text is the seller's name and
+#: its href carries the seller id. The row also says it in words ("Ships from
+#: Amazon.com Sold by Aproca Direct"), which the reader falls back to.
+CHECKOUT_LINE_SELLER: Final[tuple[str, ...]] = (
+    "a[href*='seller=']",
+    ".sc-product-sold-by",
+    ".a-size-small.sc-product-sold-by",
+    "[data-testid='sold-by']",
+)
+
+#: "Sold by X", wherever Amazon words it that way.
+SOLD_BY_PATTERN: Final = re.compile(
+    r"sold\s+by\s+(.{2,60}?)(?:\s*\||\.|$|\s{2,})", re.IGNORECASE
+)
 
 CHECKOUT_LINE_TITLE: Final[tuple[str, ...]] = (
     ".lineitem-title-text",

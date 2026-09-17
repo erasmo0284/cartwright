@@ -163,18 +163,23 @@ class PurchaseGuard:
         order total, the delivery address, the payment method and unexpected
         add-ons.
         """
+        # Which line *is* the item, resolved once. On a checkout that prints
+        # no item code this is the title match the ASIN check made, and the
+        # price, quantity and foreign-line checks have to agree with it
+        # rather than each deciding for itself.
+        target = self._target_lines(rules, checkout, product)
         checks: list[GuardCheck] = [
-            self._check_asin_in_checkout(rules, checkout),
+            self._check_asin_in_checkout(rules, checkout, product),
             self._check_variation(rules, product),
             self._check_condition(rules, product),
             self._check_seller(rules, product),
             self._check_seller_changed(rules, product),
-            self._check_checkout_seller(rules, checkout),
-            self._check_quantity_in_checkout(rules, checkout),
+            self._check_checkout_seller(rules, checkout, target),
+            self._check_quantity_in_checkout(rules, checkout, target),
             self._check_subscription_in_checkout(rules, checkout),
-            self._check_item_price_in_checkout(rules, checkout),
+            self._check_item_price_in_checkout(rules, checkout, target),
             self._check_addons(rules, checkout),
-            self._check_foreign_lines(rules, checkout),
+            self._check_foreign_lines(rules, checkout, target),
             self._check_order_total_known(checkout),
             self._check_max_order_total(rules, checkout),
             self._check_address(rules, checkout),
@@ -208,8 +213,26 @@ class PurchaseGuard:
         return check_pass(CHECK_ASIN, "Product", actual=actual)
 
     def _check_asin_in_checkout(
-        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+        self,
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        product: ProductSnapshot | None = None,
     ) -> GuardCheck:
+        """Confirm the order contains the item the user chose.
+
+        By item code where Amazon prints one. It usually does not: a live
+        third-party order on 2026-09-16 carried no ``data-asin`` anywhere in
+        the line, and the Amazon-sold order only had one because a
+        Subscribe & Save upsell inside the row happened to include it.
+
+        Where there is no code, the title is the only identity the page
+        offers, so it is used -- but strictly: exactly one line in the whole
+        order, that line carrying no code of its own, and its title matching
+        the product page's title exactly once normalised. Anything less is a
+        failure. The compensating controls are the ones that still work on
+        that page: the seller on the order line, the item price, the order
+        total and the delivery address.
+        """
         expected = rules.expected_asin.strip().upper()
         matching = checkout.lines_for(expected)
         if not checkout.lines:
@@ -221,15 +244,59 @@ class PurchaseGuard:
                 actual="no items could be read",
                 detail="The checkout page did not list any items to verify.",
             )
-        if not matching:
-            return check_fail(
+        if matching:
+            return check_pass(CHECK_ASIN, "Product", actual=expected)
+
+        if self._identified_by_title(checkout, product):
+            return check_pass(
                 CHECK_ASIN,
                 "Product",
-                ErrorCode.ASIN_MISMATCH,
-                expected=expected,
-                actual=", ".join(line.asin or "unknown" for line in checkout.lines),
+                actual=f"{expected} (matched by name; Amazon did not show the item code)",
             )
-        return check_pass(CHECK_ASIN, "Product", actual=expected)
+
+        return check_fail(
+            CHECK_ASIN,
+            "Product",
+            ErrorCode.ASIN_MISMATCH,
+            expected=expected,
+            actual=", ".join(line.asin or "unknown" for line in checkout.lines),
+        )
+
+    def _target_lines(
+        self,
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        product: ProductSnapshot | None,
+    ) -> tuple[CartLine, ...]:
+        """The lines that are the item being bought, by code or by name."""
+        matching = checkout.lines_for(rules.expected_asin)
+        if matching:
+            return tuple(matching)
+        if self._identified_by_title(checkout, product):
+            return tuple(checkout.lines)
+        return ()
+
+    @staticmethod
+    def _identified_by_title(
+        checkout: CheckoutSnapshot, product: ProductSnapshot | None
+    ) -> bool:
+        """Whether the single unlabelled line is demonstrably the right item.
+
+        Deliberately narrow. One line, no item code on it, and a title equal
+        to the one read from the product page moments earlier. A second line,
+        a line bearing someone else's code, a missing title or a title that
+        differs by so much as a word all mean "not established".
+        """
+        if product is None or len(checkout.lines) != 1:
+            return False
+        line = checkout.lines[0]
+        if line.asin:
+            # It has a code, and the code did not match. That is a different
+            # item, not an unlabelled one.
+            return False
+        expected_title = normalise_label(product.title)
+        actual_title = normalise_label(line.title)
+        return bool(expected_title) and expected_title == actual_title
 
     def _check_variation(
         self, rules: PurchaseRules, product: ProductSnapshot
@@ -341,19 +408,27 @@ class PurchaseGuard:
         )
 
     def _check_checkout_seller(
-        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+        self,
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        target: Sequence[CartLine] | None = None,
     ) -> GuardCheck:
         """The seller of the line actually in the order.
 
         Every other seller check reads the product page, which was loaded
         earlier; Amazon's buybox can change hands in between. This is the
-        only check that looks at the offer being bought.
+        only check that looks at the offer being bought, which makes it the
+        compensating control when an approved-seller rule is what allowed a
+        non-Amazon seller through.
 
-        When Amazon does not show a seller on the line the check is not
-        applicable under the permissive policy, but fails under any stricter
-        one -- an unverifiable seller cannot satisfy a rule about sellers.
+        Amazon names the seller on a third-party line and says nothing on its
+        own. Silence is therefore *weak* evidence of "sold by Amazon" and not
+        proof of it: the check reports SKIPPED in that case and says the
+        product page was used instead, rather than claiming a pass.
         """
-        matching = checkout.lines_for(rules.expected_asin)
+        matching = (
+            list(target) if target is not None else checkout.lines_for(rules.expected_asin)
+        )
         sellers = [line.seller for line in matching if line.seller]
 
         if not sellers:
@@ -439,10 +514,15 @@ class PurchaseGuard:
         return check_pass(CHECK_QUANTITY, "Quantity", actual=str(wanted))
 
     def _check_quantity_in_checkout(
-        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+        self,
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        target: Sequence[CartLine] | None = None,
     ) -> GuardCheck:
         expected = rules.quantity
-        matching = checkout.lines_for(rules.expected_asin)
+        matching = (
+            list(target) if target is not None else checkout.lines_for(rules.expected_asin)
+        )
         if not matching:
             # The ASIN check already reports this; avoid a duplicate failure.
             return check_not_applicable(CHECK_QUANTITY, "Quantity")
@@ -620,10 +700,15 @@ class PurchaseGuard:
         )
 
     def _check_item_price_in_checkout(
-        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+        self,
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        target: Sequence[CartLine] | None = None,
     ) -> GuardCheck:
         limit = rules.max_item_price
-        matching = checkout.lines_for(rules.expected_asin)
+        matching = (
+            list(target) if target is not None else checkout.lines_for(rules.expected_asin)
+        )
         unit_prices = [
             line.unit_price for line in matching if line.unit_price is not None
         ]
@@ -746,14 +831,26 @@ class PurchaseGuard:
         )
 
     def _check_foreign_lines(
-        self, rules: PurchaseRules, checkout: CheckoutSnapshot
+        self,
+        rules: PurchaseRules,
+        checkout: CheckoutSnapshot,
+        target: Sequence[CartLine] | None = None,
     ) -> GuardCheck:
         """No product other than the chosen one may be in the order.
 
         Always required. There is no setting that permits buying something
         the user did not choose, which is the whole point of cart isolation.
+
+        ``target`` is the line the order was identified by. Where Amazon
+        printed no item code, every *other* line is foreign -- a line the
+        ASIN check could not account for is not given the benefit of the
+        doubt just because it has no code either.
         """
-        foreign = checkout.foreign_lines(rules.expected_asin)
+        if target:
+            identified = {id(line) for line in target}
+            foreign = [line for line in checkout.lines if id(line) not in identified]
+        else:
+            foreign = list(checkout.foreign_lines(rules.expected_asin))
         if not foreign:
             return check_pass(
                 CHECK_CART_CONTENTS, "Only your item in the order", actual="1 item"

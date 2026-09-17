@@ -377,13 +377,28 @@ class CheckoutManager:
         bought, rather than trusting the product page read minutes earlier --
         the buybox can flip in between.
         """
-        try:
-            target = row.locator(selectors.CART_ITEM_SELLER).first
-            if target.count() == 0:
-                return None
-            text = clean(target.text_content(timeout=1_500))
-        except Exception:  # noqa: BLE001
-            return None
+        text: str | None = None
+        for selector in selectors.CHECKOUT_LINE_SELLER:
+            try:
+                target = row.locator(selector).first
+                if target.count() == 0:
+                    continue
+                text = clean(target.text_content(timeout=1_500))
+            except Exception:  # noqa: BLE001
+                continue
+            if text:
+                break
+
+        if not text:
+            # No element for it, but the row still says it in words:
+            # "Ships from Amazon.com Sold by Aproca Direct".
+            try:
+                whole = clean(row.inner_text(timeout=1_500)) or ""
+            except Exception:  # noqa: BLE001
+                whole = ""
+            match = selectors.SOLD_BY_PATTERN.search(whole)
+            text = clean(match.group(1)) if match else None
+
         if not text:
             return None
         cleaned = text.strip()
