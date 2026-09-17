@@ -71,7 +71,7 @@ file when Amazon changes.
   The bound on this is the ASIN check: a different variation is a different
   ASIN, and that comparison is exact. A new dimension name therefore weakens
   the *description* of what is being bought, not the identity of it. Since
-  1.0.0 the app notices this case and says so on the rules screen, rather
+  1.0.1 the app notices this case and says so on the rules screen, rather
   than letting the user assume the version was recorded.
 - **Amazon does not print the item code on its current checkout**, so the
   app confirms the order holds the right item by matching its *name* against
@@ -153,7 +153,7 @@ against the real thing:
 
 ## Installer
 
-`Cartwright-1.0.0-Setup.exe` was built with Inno Setup 6.7.3 and
+`Cartwright-1.0.1-Setup.exe` was built with Inno Setup 6.7.3 and
 tested unattended: install (exit 0, 5.1 s, no administrator prompt, 217 MB in
 `%LOCALAPPDATA%\Programs`), launch of the installed copy, and uninstall
 (exit 0, program and shortcuts removed, **user data kept**, the

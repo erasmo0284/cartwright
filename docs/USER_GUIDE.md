@@ -10,7 +10,7 @@ using its own private browser window on your PC.
 
 ## Installing
 
-1. Run `Cartwright-1.0.0-Setup.exe`.
+1. Run `Cartwright-1.0.1-Setup.exe`.
 2. It installs for you only, so Windows will not ask for an administrator
    password.
 3. Tick "Create a desktop icon" if you want one.

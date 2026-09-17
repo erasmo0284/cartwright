@@ -4,6 +4,21 @@ All notable changes to Cartwright are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-09-17
+
+### Changed
+
+- **New application icon.** A shopping trolley with a check on a deep blue
+  tile, replacing the drawn shield. It is the first image in the application
+  that is a file rather than a shape drawn from source, so it is collected by
+  the PyInstaller spec and the loader raises if it is missing — a build
+  without it fails at start-up instead of shipping a blank taskbar button.
+  The tray icon is deliberately unchanged: it has to stay legible at 16px and
+  change colour with the application's state, which artwork cannot do.
+- The installer's publisher is now `erasmo0284`, matching `branding.py`. It
+  had been left as the product name during the rename, so Windows listed the
+  application as its own publisher.
+
 ## [1.0.0] — 2026-09-17
 
 First public release.
@@ -57,4 +72,5 @@ history are unproven; Amazon's checkout does not print the item code, so the
 order's contents are confirmed by name where it does not; the build is
 unsigned; and it is Windows-only and written for `amazon.com`.
 
+[1.0.1]: https://github.com/erasmo0284/cartwright/releases/tag/v1.0.1
 [1.0.0]: https://github.com/erasmo0284/cartwright/releases/tag/v1.0.0

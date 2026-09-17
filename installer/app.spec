@@ -25,6 +25,13 @@
 # Playwright ships its own hooks through the ``pyinstaller40`` entry point,
 # so its Node driver and JavaScript are collected automatically; there is no
 # need to list them here.
+#
+# The one data file is the application artwork. Interface icons are drawn from
+# inline SVG precisely so there is nothing to collect; the app icon cannot be,
+# so it is listed below and ``app.ui.theme.icons`` raises if it is missing --
+# a build without it fails at start-up rather than shipping a blank taskbar
+# button. ``scripts/build.py`` also reads it before PyInstaller runs, to
+# generate the .ico, so an absent file stops the build even earlier.
 
 import sys
 from pathlib import Path
@@ -116,7 +123,7 @@ analysis = Analysis(  # noqa: F821
     [str(PROJECT_ROOT / "app" / "main.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=[(str(PROJECT_ROOT / "assets" / "icons" / "app.png"), "assets/icons")],
     # Imported lazily inside functions, so PyInstaller cannot see them by
     # static analysis -- but Playwright's hook only fires if the module is
     # known, so both API surfaces are declared.

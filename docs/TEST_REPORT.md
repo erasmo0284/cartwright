@@ -1,13 +1,13 @@
 # Test report
 
-Generated for version 1.0.0 on Windows 11 Pro (26200), Python 3.14.6,
+Generated for version 1.0.1 on Windows 11 Pro (26200), Python 3.14.6,
 PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 
 ## Summary
 
 ```
-1187 tests collected
-1118 passed, 69 skipped in 178s
+1191 tests collected
+1122 passed, 69 skipped in 174s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -19,7 +19,7 @@ under "Still open" below) or has been rewritten as a regression test.
 
 | Area | Tests |
 |---|---|
-| Theme, contrast, icons | 145 |
+| Theme, contrast, icons | 149 |
 | Logging contract (static scan) | 104 |
 | Widget library | 93 |
 | Notifications | 78 |
@@ -137,7 +137,7 @@ so the test cannot be satisfied by logging nothing.
 | Packaged app launches | Window titled "Cartwright", 110 MB working set |
 | Packaged app drives the browser | Process tree `Cartwright.exe → node.exe → 8× chrome.exe` |
 | Packaged app after a hard kill | Restarted cleanly; no migration re-run; browser started again |
-| Installer build | 55 MB `Setup.exe` |
+| Installer build | 56 MB `Setup.exe` |
 | Unattended install | Exit 0 in 5.1 s, no admin prompt, 217 MB in `%LOCALAPPDATA%\Programs` |
 | Start Menu AppUserModelID | `Get-StartApps` reports `Cartwright.Desktop` |
 | Installed copy runs | Window created, AUMID registered, browser started, no errors |

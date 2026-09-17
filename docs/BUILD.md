@@ -59,7 +59,7 @@ Then:
 .venv\Scripts\python.exe scripts\build.py --installer
 ```
 
-Output: `installer/output/Cartwright-1.0.0-Setup.exe` — about 55 MB.
+Output: `installer/output/Cartwright-1.0.1-Setup.exe` — about 56 MB.
 
 `scripts/build.py` looks for `ISCC.exe` in the per-user location that
 `winget` uses (`%LOCALAPPDATA%\Programs\Inno Setup 6\`) as well as the two
@@ -70,7 +70,7 @@ without administrator rights.
 
 ```powershell
 # install, unattended
-.\installer\output\Cartwright-1.0.0-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+.\installer\output\Cartwright-1.0.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 # uninstall, unattended (keeps the user's data)
 & "$env:LOCALAPPDATA\Programs\Cartwright\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
@@ -138,7 +138,7 @@ burden on someone else's PC.
 | Qt6Core / Qt6Gui / Qt6Widgets | 25 MB | |
 | `python314.dll` | 6.5 MB | |
 | Everything else | ~70 MB | Qt plugins, translations, winrt bindings |
-| **Total** | **213 MB** | 55 MB compressed in the installer |
+| **Total** | **213 MB** | 56 MB compressed in the installer |
 
 ## Code signing
 
@@ -153,11 +153,11 @@ description) is there partly to help reputation on an unsigned binary.
 ## This build
 
 The artefacts that accompany this documentation were produced on
-2026-09-16 with:
+2026-09-17 with:
 
 | | |
 |---|---|
-| Version | 1.0.0 (`release`) |
+| Version | 1.0.1 (`release`) |
 | Python | 3.14.6 (64-bit) |
 | PySide6-Essentials | 6.11.2 (Qt 6.11.2) |
 | Playwright | 1.63.0 (Chromium build 1243) |
@@ -165,12 +165,12 @@ The artefacts that accompany this documentation were produced on
 | Inno Setup | 6.7.3 |
 | Host | Windows 11 Pro 26200 |
 | `dist\Cartwright\` | 213 MB, onedir, no UPX |
-| `Cartwright-1.0.0-Setup.exe` | 57,937,901 bytes (55 MB) |
-| Installer SHA-256 | `0d4965ba4ce8382cbe7f75b6de3ecb7e9cebb427563997f02331a9831cd1ad7c` |
+| `Cartwright-1.0.1-Setup.exe` | 58,565,650 bytes (56 MB) |
+| Installer SHA-256 | `a167b4ec9dab9e90692964d889a5173e83f1a52034db9969dfcf292cdbe0cfcf` |
 | Installed size | 217 MB in `%LOCALAPPDATA%\Programs\Cartwright` |
 
 The browser is **not** in either artefact: it is downloaded on first run into
-the user's own data directory, which is why the installer is 55 MB rather
+the user's own data directory, which is why the installer is 56 MB rather
 than half a gigabyte.
 
 ## Repeatable builds

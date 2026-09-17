@@ -1,3 +1,5 @@
+<img src="assets/icons/app.png" alt="" width="104" align="right">
+
 # Cartwright
 
 **A careful hand on your cart.** A Windows desktop application that watches
@@ -144,7 +146,7 @@ Run the tests:
 .venv\Scripts\python.exe -m pytest tests
 ```
 
-1,118 tests. The integration tests drive a real Chromium against local
+1,122 tests. The integration tests drive a real Chromium against local
 fixture pages with every request intercepted, so they cannot reach Amazon and
 cannot place an order. [BUILD.md](docs/BUILD.md) has the rest, including how
 the installer is produced.

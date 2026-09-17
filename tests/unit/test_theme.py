@@ -26,8 +26,10 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402  (must follow the platform setting)
-from PySide6.QtGui import QFont, QIcon  # noqa: E402
+from PySide6.QtGui import QFont, QIcon, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from app.paths import resource_path  # noqa: E402
 
 from app.ui.theme import fonts, icons  # noqa: E402
 from app.ui.theme.stylesheet import build_qss, template_source  # noqa: E402
@@ -518,6 +520,58 @@ def test_tray_states_differ_from_each_other(qt_app: QApplication) -> None:
 def test_tray_icon_rejects_an_unknown_state(qt_app: QApplication) -> None:
     with pytest.raises(KeyError):
         icons.tray_icon("exploding")
+
+
+# ---------------------------------------------------------------------------
+# The application artwork
+#
+# Every other icon is drawn from a string, so it cannot go missing. This one
+# is a file that PyInstaller has to be told to collect, which is exactly the
+# failure the icons module's docstring warns about, so it is pinned here: the
+# file exists, it is listed in the spec, and the loader refuses to paper over
+# its absence.
+# ---------------------------------------------------------------------------
+
+
+def test_the_application_artwork_is_present_and_square() -> None:
+    source = resource_path(*icons.APP_ICON_ASSET)
+    assert source.exists(), f"the application icon is missing from {source}"
+
+    image = QImage(str(source))
+    assert not image.isNull(), "the application icon could not be decoded"
+    assert image.width() == image.height(), "the application icon must be square"
+    assert image.width() >= max(icons.ICO_SIZES), (
+        "the artwork is smaller than the largest size written into the .ico, "
+        "so Explorer's extra-large view would show an upscale"
+    )
+
+
+def test_the_spec_file_collects_the_artwork() -> None:
+    """A green suite here with a missing ``datas`` entry means a release
+    build that dies on start-up, so the two are tied together."""
+    spec = Path(__file__).resolve().parents[2] / "installer" / "app.spec"
+    body = spec.read_text(encoding="utf-8")
+    assert "datas=[]" not in body, "the spec no longer collects the application icon"
+    for part in icons.APP_ICON_ASSET:
+        assert part in body, f"the spec does not mention {part!r}"
+
+
+def test_a_missing_artwork_file_raises_rather_than_rendering_blank(
+    qt_app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(icons, "resource_path", lambda *parts: tmp_path.joinpath(*parts))
+    icons._app_artwork.cache_clear()
+    try:
+        with pytest.raises(FileNotFoundError):
+            icons.app_icon()
+    finally:
+        icons._app_artwork.cache_clear()
+
+
+def test_the_icon_is_the_artwork_and_not_a_blank_tile(qt_app: QApplication) -> None:
+    """At 32px -- the taskbar size -- the icon must carry the artwork's own
+    detail, not just its background colour."""
+    assert _distinct_colours(icons.app_icon(), 32) > 32
 
 
 def test_app_icon_is_multi_size(qt_app: QApplication) -> None:

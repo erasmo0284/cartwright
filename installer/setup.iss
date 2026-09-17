@@ -20,12 +20,12 @@
 
 #define MyAppName "Cartwright"
 #define MyAppShortName "Cartwright"
-#define MyAppPublisher "Cartwright"
+#define MyAppPublisher "erasmo0284"
 #define MyAppExeName "Cartwright.exe"
 #define MyDataFolder "Cartwright"
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "1.0.1"
 #endif
 
 #define DistDir "..\dist\Cartwright"

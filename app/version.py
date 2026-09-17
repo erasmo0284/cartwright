@@ -6,7 +6,7 @@ pulling in the rest of the application (or its third-party dependencies).
 
 from __future__ import annotations
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 """Semantic version of the application."""
 
 BUILD_CHANNEL = "release"

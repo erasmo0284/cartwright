@@ -1,4 +1,4 @@
-r"""Icons, drawn at runtime from inline SVG.
+r"""Interface icons, drawn at runtime from inline SVG.
 
 Why not ship PNG or SVG files
 -----------------------------
@@ -8,6 +8,14 @@ line away from being missing in a release build, and a missing icon is a blank
 square in the navigation list -- a visible defect with no error message. The
 glyphs here are short enough to live in source, so there is nothing to bundle,
 nothing to find at runtime and nothing to get out of sync with the theme.
+
+The application icon is the exception: it is artwork, not a glyph, and cannot
+be written as a stroke path. It ships as ``assets/icons/app.png``, is listed
+in ``installer/app.spec`` so PyInstaller collects it, and :func:`_app_artwork`
+raises instead of falling back to a blank image -- the failure the paragraph
+above warns about is made loud rather than merely avoided. The tray icon is
+*not* artwork: it stays drawn, because it has to read at 16px and change
+colour with the application's state.
 
 Drawing them ourselves also solves recolouring. Qt cannot tint an arbitrary
 ``QIcon`` for dark mode; the usual workarounds are a second set of assets or a
@@ -27,6 +35,7 @@ round caps and joins, no fills, no detail that disappears below 16px.
 from __future__ import annotations
 
 import struct
+from functools import lru_cache
 from pathlib import Path
 from string import Template
 from typing import ClassVar, Final, Mapping
@@ -35,6 +44,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PySide6.QtGui import QGuiApplication, QIcon, QImage, QImageWriter, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
+from app.paths import resource_path
 from app.ui.theme.tokens import DARK_TOKENS, LIGHT_TOKENS
 
 #: Rasterisation sizes for interface icons. 16 and 20 cover 100% and 125%
@@ -142,26 +152,44 @@ _TRAY_DOCUMENT: Final[str] = (
     "</svg>"
 )
 
-#: The application mark: a shield with a check, on a solid accent tile. It
-#: says "a purchase that was verified", which is what the product does, and it
-#: shares no shape, mark or colour with Amazon's own branding.
+#: The application mark: a shopping trolley with a check, on a deep blue
+#: tile. It says "a purchase that was verified", which is what the product
+#: does, and it shares no shape, mark or colour with Amazon's own branding.
 #:
-#: Fixed colours, not tokens: this icon appears on the taskbar, in Explorer,
-#: in the installer and in the Action Center, none of which follow the
-#: application's own light/dark choice.
-_APP_TILE: Final[str] = LIGHT_TOKENS["accent"]
-_APP_MARK: Final[str] = "#FFFFFF"
+#: This is the one image in the application that is a file rather than drawn
+#: from source, for the reasons in the module docstring.
+APP_ICON_ASSET: Final[tuple[str, ...]] = ("assets", "icons", "app.png")
 
-_APP_DOCUMENT: Final[str] = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" '
-    'width="48" height="48">'
-    f'<rect x="1" y="1" width="46" height="46" rx="10" fill="{_APP_TILE}"/>'
-    f'<path d="M24 10l12 4.6v8.2c0 7.2-4.8 12.5-12 14.2-7.2-1.7-12-7-12-14.2v-8.2z" '
-    f'fill="none" stroke="{_APP_MARK}" stroke-width="3" stroke-linejoin="round"/>'
-    f'<path d="M18.5 23.8l4.3 4.3 7.4-8" fill="none" stroke="{_APP_MARK}" '
-    'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
-    "</svg>"
-)
+
+@lru_cache(maxsize=1)
+def _app_artwork() -> QImage:
+    """The application artwork, loaded once.
+
+    Raises rather than returning a blank image: a silent fallback here is how
+    a release ships with no icon and nobody notices until a user says the
+    taskbar looks wrong.
+    """
+    source = resource_path(*APP_ICON_ASSET)
+    image = QImage(str(source))
+    if image.isNull():
+        raise FileNotFoundError(f"The application icon is missing or unreadable: {source}")
+    return image.convertToFormat(QImage.Format.Format_ARGB32)
+
+
+def _artwork_pixmap(size: int) -> QPixmap:
+    """The artwork at ``size`` px.
+
+    Every size is scaled from the full-resolution original rather than from
+    an already-reduced copy, so the 16px title-bar icon does not inherit the
+    softness of the 32px one.
+    """
+    scaled = _app_artwork().scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    return QPixmap.fromImage(scaled)
 
 
 def _default_tokens() -> Mapping[str, str]:
@@ -300,7 +328,10 @@ def tray_states() -> tuple[str, ...]:
 
 def app_icon() -> QIcon:
     """The application icon, for window title bars and the task switcher."""
-    return _multi_size_icon(_APP_DOCUMENT, ICO_SIZES)
+    icon = QIcon()
+    for size in ICO_SIZES:
+        icon.addPixmap(_artwork_pixmap(size))
+    return icon
 
 
 def write_ico(path: Path) -> None:
@@ -317,7 +348,7 @@ def write_ico(path: Path) -> None:
     what Windows itself uses for the 256px size; every supported Windows
     version reads them at every size.
     """
-    payloads = [(size, _png_bytes(_rasterise(_APP_DOCUMENT, size))) for size in ICO_SIZES]
+    payloads = [(size, _png_bytes(_artwork_pixmap(size))) for size in ICO_SIZES]
 
     header = struct.pack("<HHH", 0, 1, len(payloads))
     # Image data starts after the header and the whole directory.
