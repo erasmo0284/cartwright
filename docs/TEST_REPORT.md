@@ -333,7 +333,7 @@ they establish, and what they do not:
 | Control experiment | The same library sent a toast under PowerShell's own well-known AppUserModelID -- an identity Windows already trusts. It behaved identically: accepted, no banner, nothing in history. **This machine is not displaying toast banners at all**, so the app's result says nothing about the app |
 | Start with Windows | `startup.enable()` writes the `Run` value with the right command; `is_enabled()` reads it back; a `StartupApproved` blob of `03 00 …` is correctly read as "Turned off in Windows Settings" and `02 00 …` as "On"; `disable()` removes both. Done against the **real** `HKCU` keys, then cleaned up |
 | Tray icon | Launching the app creates a real notification-area entry: `HKCU\Control Panel\NotifyIconSettings` gains a row whose `ExecutablePath` is the application's executable. It is not promoted out of the overflow flyout, which is Windows' default for a new application, so its **appearance** is still unconfirmed |
-| Dark title bar and window chrome | **Confirmed.** The installed copy was captured on real hardware in dark mode: the caption bar is dark with light text and the application icon, matching the window body (`docs/screens/real-installed-titlebar-dark.png`, `real-installed-dashboard-dark.png`) |
+| Dark title bar and window chrome | **Confirmed.** The packaged build (the same folder the installer copies) was captured on real hardware in dark mode: the caption bar is dark with light text and the application icon, matching the window body (`docs/screens/real-installed-titlebar-dark.png`, `real-installed-dashboard-dark.png`) |
 
 What this does *not* prove: that a user will see a toast on a machine with
 notifications enabled, that clicking a toast button reaches
