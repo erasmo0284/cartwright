@@ -346,6 +346,18 @@ class RulesEditor(QWidget):
                     "price falls."
                 )
 
+        if snapshot is not None and snapshot.variation_unreadable:
+            # Said plainly rather than left to be assumed. The rule stores no
+            # variation expectation in this case, so the only thing pinning
+            # the exact version is the item code -- which is enough, because
+            # each version has its own, but the user should know that is what
+            # they are relying on.
+            return (
+                "This item comes in several versions and the app could not "
+                "read which one is shown. It will buy exactly the item code "
+                f"{rules.expected_asin}, and will not check the version name."
+            )
+
         if rules.allow_subscription:
             return "This may start a repeating delivery rather than a one-off order."
 

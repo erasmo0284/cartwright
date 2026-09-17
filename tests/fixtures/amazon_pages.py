@@ -511,6 +511,27 @@ def _summary_row(label: str, value: str, *, bold: bool = False) -> str:
     """
 
 
+def _summary_table(
+    *, item_subtotal: str, shipping: str, tax: str, order_total: str
+) -> str:
+    """The order-summary table, identified by row label rather than position.
+
+    Shared by the classic checkout and by the Buy Now modal, because Amazon
+    renders the same table in both -- the only difference being which document
+    it lives in, which is exactly what the Turbo tests are about.
+    """
+    return f"""
+    <div id="subtotals">
+      <table id="subtotals-marketplace-table">
+        {_summary_row("Items", f"${item_subtotal}")}
+        {_summary_row("Shipping &amp; handling", f"${shipping}")}
+        {_summary_row("Estimated tax to be collected", f"${tax}")}
+        {_summary_row("Order total", f"${order_total}", bold=True)}
+      </table>
+    </div>
+    """
+
+
 def checkout_page(
     *,
     asin: str = DEFAULT_ASIN,
@@ -589,14 +610,8 @@ def checkout_page(
         </div>
         {subscription_block}
       </div>
-      <div id="subtotals">
-        <table id="subtotals-marketplace-table">
-          {_summary_row("Items", f"${item_subtotal}")}
-          {_summary_row("Shipping &amp; handling", f"${shipping}")}
-          {_summary_row("Estimated tax to be collected", f"${tax}")}
-          {_summary_row("Order total", f"${order_total}", bold=True)}
-        </table>
-      </div>
+      {_summary_table(item_subtotal=item_subtotal, shipping=shipping,
+                      tax=tax, order_total=order_total)}
       {'<span id="submitOrderButtonId" data-testid="SPC_selectPlaceOrder">'
        '<input type="submit" name="placeYourOrder1" value="Place your order" '
        'title="Place your order"></span>' if place_order_button else ''}
@@ -604,6 +619,189 @@ def checkout_page(
     </div>
     """
     return _shell(body, title="Amazon.com Checkout")
+
+
+# ---------------------------------------------------------------------------
+# Buy Now (Turbo) checkout
+# ---------------------------------------------------------------------------
+
+#: Where the Buy Now modal's document is served from. It is a *separate*
+#: document from the page that hosts it, so a test must register this address
+#: with the fixture site alongside the host page's -- see the ``also``
+#: argument of the ``load`` fixture. Without a route of its own the frame would
+#: be an unrouted request, which is the harness telling the truth: the modal is
+#: a second page load, not a fragment of the first.
+TURBO_IFRAME_URL = "https://www.amazon.com/checkout/turbo-checkout-iframe.html"
+
+
+def turbo_checkout_frame(
+    *,
+    asin: str = DEFAULT_ASIN,
+    title: str = DEFAULT_TITLE,
+    quantity: int = 1,
+    item_price: str = "109.97",
+    item_subtotal: str = "109.97",
+    shipping: str = "0.00",
+    tax: str = "7.97",
+    order_total: str = "117.94",
+    address: str | None = "John D., Raleigh, NC 27601",
+    payment: str | None = "Visa ending in 1234",
+    panel: bool = True,
+    place_order_button: bool = True,
+    summary: bool = True,
+) -> str:
+    """The document *inside* ``#turbo-checkout-iframe``.
+
+    This is the whole of a Buy Now purchase: the address, the payment method,
+    the line item and the order summary all live in here, and so does the only
+    button that places the order. Nothing in this document is reachable from a
+    locator built against the page that hosts it.
+
+    ``summary=False`` models a panel that rendered without its order summary,
+    which is how a total becomes genuinely unreadable now that the frame is
+    read properly -- the case the submit barrier has to refuse.
+
+    ``panel=False`` models the modal that opened but never finished rendering
+    -- Amazon serves the frame, the spinner runs, and the panel container never
+    arrives. The order button is still rendered in that state on purpose, so a
+    test can prove that it is the *panel* that gates the Turbo path and not the
+    mere presence of a button.
+    """
+    if not panel:
+        body = """
+        <div id="turbo-checkout-spinner" class="a-spinner-wrapper">
+          <span class="a-spinner a-spinner-medium"></span>
+        </div>
+        """
+        if place_order_button:
+            body += _turbo_place_order_button()
+        return _shell(body, title="Amazon.com Checkout")
+
+    body = f"""
+    <div id="turbo-checkout-panel-container">
+      <div id="turbo-checkout-panel" class="a-section">
+        <div id="turbo-checkout-shipping-address-container">
+          <h5>Deliver to</h5>
+          {f'<div class="displayAddressDiv">{address}</div>' if address else
+           '<div class="displayAddressDiv"></div>'}
+        </div>
+        <div id="payment-information">
+          <h5>Pay with</h5>
+          {f'<div id="paymentMethodDisplay" class="a-color-base">{payment}</div>'
+           if payment else
+           '<div id="paymentMethodDisplay" class="a-color-base"></div>'}
+        </div>
+        <div id="spc-orders">
+          <div id="huc-v2-order-row-items">
+            <div class="a-fixed-left-grid lineitem-container" data-asin="{asin}">
+              <span class="a-size-base sc-product-title">{title}</span>
+              <span class="a-price"><span class="a-offscreen">${item_price}</span></span>
+              <span class="quantity">Qty: {quantity}</span>
+            </div>
+          </div>
+        </div>
+        {_summary_table(item_subtotal=item_subtotal, shipping=shipping,
+                        tax=tax, order_total=order_total) if summary else ''}
+        {_turbo_place_order_button() if place_order_button else ''}
+      </div>
+    </div>
+    """
+    return _shell(body, title="Amazon.com Checkout")
+
+
+def _turbo_place_order_button() -> str:
+    """The modal's submit control.
+
+    The outer span carries the id the selectors target; the inner input is what
+    the user actually presses. A click on the span lands on the input and
+    bubbles back, which is why a listener on either one sees it.
+    """
+    return """
+    <span id="turbo-checkout-pyo-button" class="a-button a-button-primary">
+      <input id="turbo-checkout-place-order-button" type="submit"
+             name="placeYourOrder1" value="Place your order"
+             title="Place your order">
+    </span>
+    """
+
+
+def turbo_checkout_page(
+    *,
+    asin: str = DEFAULT_ASIN,
+    title: str = DEFAULT_TITLE,
+    price: str = "109.97",
+    iframe: bool = True,
+    iframe_src: str = TURBO_IFRAME_URL,
+    host_summary: bool = False,
+    host_item_subtotal: str = "109.97",
+    host_shipping: str = "0.00",
+    host_tax: str = "7.97",
+    host_order_total: str = "117.94",
+    host_place_order_button: bool = False,
+    signed_in: bool = True,
+) -> str:
+    """The page that *hosts* the Buy Now modal: a product page plus an overlay.
+
+    This is what Amazon serves when Buy Now opens a modal checkout instead of
+    navigating to ``/gp/buy/spc/``. The product page stays where it was and an
+    overlay containing ``#turbo-checkout-iframe`` is drawn on top of it, so the
+    host document has no order summary, no address, no payment method and no
+    order button -- they are all in the frame.
+
+    ``host_summary`` and ``host_place_order_button`` deliberately contradict
+    that. They exist because :class:`~app.automation.checkout_manager.CheckoutManager`
+    reads the checkout through a reader bound to *this* document while finding
+    the button in the frame, so without a total on the host page a submission
+    can never get past its own total check and no test could ever reach the
+    click. A test that turns them on is testing the button, not the reader, and
+    says so.
+    """
+    whole, _, fraction = price.partition(".")
+    overlay = (
+        f"""
+        <div id="turbo-checkout-overlay" class="a-popover a-popover-modal">
+          <iframe id="turbo-checkout-iframe" name="turbo-checkout-iframe"
+                  title="Buy Now checkout" src="{iframe_src}"
+                  width="760" height="520" frameborder="0"></iframe>
+        </div>
+        """
+        if iframe
+        else ""
+    )
+
+    body = f"""
+    {_nav(signed_in)}
+    <div id="dp-container">
+      <div id="centerCol">
+        <h1 id="title"><span id="productTitle">{title}</span></h1>
+        <div id="corePrice_feature_div">
+          <span class="a-price priceToPay">
+            <span class="a-offscreen">${price}</span>
+            <span aria-hidden="true">
+              <span class="a-price-whole">{whole}</span>
+              <span class="a-price-fraction">{fraction or '00'}</span>
+            </span>
+          </span>
+        </div>
+      </div>
+      <div id="desktop_buybox">
+        <div id="qualifiedBuybox">
+          <div id="availability"><span class="a-color-success">In Stock</span></div>
+          <input id="buy-now-button" name="submit.buy-now" type="submit"
+                 value="Buy Now">
+        </div>
+      </div>
+      <input type="hidden" id="ASIN" name="ASIN" value="{asin}">
+    </div>
+    {_summary_table(item_subtotal=host_item_subtotal, shipping=host_shipping,
+                    tax=host_tax, order_total=host_order_total)
+     if host_summary else ''}
+    {'<span id="submitOrderButtonId" data-testid="SPC_selectPlaceOrder">'
+     '<input type="submit" name="placeYourOrder1" value="Place your order" '
+     'title="Place your order"></span>' if host_place_order_button else ''}
+    {overlay}
+    """
+    return _shell(body, title=f"Amazon.com: {title}")
 
 
 def confirmation_page(

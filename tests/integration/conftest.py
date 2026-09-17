@@ -15,7 +15,7 @@ lifecycle.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -155,11 +155,22 @@ def page(context) -> Iterator[object]:
 
 
 @pytest.fixture
-def load(page, site) -> Callable[[str, str], object]:
-    """Serve ``html`` at ``url`` and navigate to it, returning a PageReader."""
+def load(page, site) -> Callable[..., object]:
+    """Serve ``html`` at ``url`` and navigate to it, returning a PageReader.
+
+    ``also`` registers further documents that the page will itself request, as
+    a mapping of URL to HTML. The Buy Now modal is served from its own address
+    inside an iframe, and a document the test did not register is answered with
+    a 404 and recorded as unexpected -- so a frame that matters has to be
+    routed deliberately, exactly like the page that hosts it.
+    """
     from app.automation.page_reader import PageReader
 
-    def _load(url: str, html: str) -> PageReader:
+    def _load(
+        url: str, html: str, *, also: Mapping[str, str] | None = None
+    ) -> PageReader:
+        for other_url, other_html in (also or {}).items():
+            site.add(other_url.split("://", 1)[-1], other_html)
         fragment = url.split("://", 1)[-1]
         site.add(fragment, html)
         page.goto(url, wait_until="domcontentloaded")

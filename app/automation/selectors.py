@@ -336,13 +336,27 @@ TWISTER_LEGACY_ROWS: Final = "#twister .a-row[id^='variation_']"
 TWISTER_LEGACY_LABEL: Final = ".a-form-label"
 TWISTER_LEGACY_VALUE: Final = ".selection"
 
-#: Inline twister rows carry the dimension in the row id and the value in a
-#: swatch marked selected.
+#: Inline twister rows carry the dimension in the row id, and today's markup
+#: puts both halves in the row's title: a secondary-coloured "Colour:" span
+#: and a ``.inline-twister-dim-title-value`` span holding the selection.
+#:
+#: Checked against a live amazon.com product page on 2026-09-16: that page has
+#: no ``.a-form-label`` and no ``.swatch-title-text-display`` at all, so the
+#: title spans are the only readable source. ``.a-form-label`` is kept for the
+#: older layout, and the value span must never be used as the *label* -- doing
+#: that read "White - 6 Pack" as a dimension name, which is then discarded as
+#: unrecognised, and the variation silently became no expectation at all.
 TWISTER_INLINE_ROWS: Final = "[id^='inline-twister-row-']"
-TWISTER_INLINE_LABEL: Final = ".a-form-label, .inline-twister-dim-title-value"
+#: Scoped to the row's heading on purpose: a bare ``.a-color-secondary`` also
+#: matches the swatch price ("1 option from $26.98") further down the row.
+TWISTER_INLINE_LABEL: Final = (
+    ".a-form-label, .dimension-text .a-color-secondary, "
+    ".inline-twister-dim-title-value-truncate-expanded .a-color-secondary, "
+    ".inline-twister-dim-title-label"
+)
 TWISTER_INLINE_SELECTED: Final = (
-    ".swatch-title-text-display, .a-button-selected .swatch-title-text, "
-    "li.swatchSelect .swatch-title-text-display"
+    ".inline-twister-dim-title-value, .swatch-title-text-display, "
+    ".a-button-selected .swatch-title-text, li.swatchSelect .swatch-title-text-display"
 )
 
 #: Dimension names Amazon uses. Used to tidy a scraped label into something a

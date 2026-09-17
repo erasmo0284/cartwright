@@ -370,6 +370,12 @@ class ProductSnapshot:
     max_quantity: int | None = None
     prime_eligible: bool | None = None
     delivery_estimate: str | None = None
+    #: True when the page showed a variation picker (colour, size, style…).
+    #: Read separately from :attr:`variation` so that "this product has no
+    #: variations" stays distinguishable from "it has variations and none of
+    #: them could be read" -- the second is what silently produces a rule
+    #: with no expectation at all.
+    variation_picker_present: bool = False
     #: True when Amazon has pre-selected a recurring Subscribe & Save option.
     subscription_preselected: bool = False
     #: True when a Buy Now control was present, enabling cart isolation.
@@ -392,6 +398,19 @@ class ProductSnapshot:
     @property
     def seller_is_amazon(self) -> bool:
         return is_amazon_retail(self.seller)
+
+    @property
+    def variation_unreadable(self) -> bool:
+        """The page offered variations and none of them could be read.
+
+        This is the state that quietly produces a rule with no variation
+        expectation: the guard can only compare what was stored, so an empty
+        expectation means "anything goes" for the life of that rule. The ASIN
+        check still pins the identity of the item -- each Amazon variation has
+        its own ASIN -- but the user should be told, not left to assume the
+        colour they were looking at was recorded.
+        """
+        return self.variation_picker_present and self.variation.is_empty
 
     def line_total(self, quantity: int) -> Money | None:
         return None if self.price is None else self.price * quantity
@@ -645,6 +664,7 @@ def snapshot_to_metadata(snapshot: ProductSnapshot) -> dict[str, Any]:
         "ships_from": snapshot.ships_from,
         "condition": snapshot.condition.value,
         "variation": snapshot.variation.describe_full(),
+        "variation_unreadable": snapshot.variation_unreadable,
         "buy_now": snapshot.buy_now_available,
         "subscription_preselected": snapshot.subscription_preselected,
     }

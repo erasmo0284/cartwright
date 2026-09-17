@@ -60,7 +60,9 @@ file when Amazon changes.
   variation the guard compares; anything else is dropped and logged at INFO.
   The bound on this is the ASIN check: a different variation is a different
   ASIN, and that comparison is exact. A new dimension name therefore weakens
-  the *description* of what is being bought, not the identity of it.
+  the *description* of what is being bought, not the identity of it. Since
+  1.0.0 the app notices this case and says so on the rules screen, rather
+  than letting the user assume the version was recorded.
 - **The `Amazon or the manufacturer` seller rule trusts the brand name the
   product page showed when you created the rule.** It is stored at that
   moment and never refreshed, so a later change to the page cannot widen what
@@ -109,19 +111,24 @@ file when Amazon changes.
 Honest inventory of code that exists and is unit-tested but has never run
 against the real thing:
 
-- **A real Action Center toast.** The notifier is tested against a fake; no
-  toast has been shown, and the AUMID registration has not been observed to
-  produce the right name and icon. `Settings → Notifications → Send a test
-  notification` exists precisely because this cannot be proven from a test.
-- **"Start with Windows".** The registry read/write is tested against a
-  scratch key; the real entry has never been created, and a real logon has
-  never been observed.
-- **The tray icon** was constructed and its tooltip asserted, but it has never
-  been seen in a notification area, and the explorer-restart recovery has not
-  been exercised.
-- **The dark title bar** (`DWMWA_USE_IMMERSIVE_DARK_MODE`) is applied without
-  error but was never visually confirmed — window captures exclude the caption
-  bar.
+- **A toast banner has never been seen.** The notifier was run for real
+  against WinRT on the development machine: the AUMID registers, the toast is
+  accepted and recorded as delivered. No banner appeared -- but a control
+  toast sent under an identity Windows already trusts (PowerShell's own)
+  behaved identically, so that machine simply does not display banners. What
+  remains unproven is the part that needs a machine with notifications on:
+  the banner itself, its name and icon, and a click on a toast button
+  reaching the application. `Settings → Notifications → Send a test
+  notification` exists precisely for this.
+- **"Start with Windows" has not survived a real logon.** The real `HKCU`
+  entry was created, read back, correctly reported as "Turned off in Windows
+  Settings" when Windows' own disable flag was set, and removed again -- but
+  no one has signed out and back in to watch it start.
+- **The tray icon** creates a real notification-area entry (Windows records
+  it under `HKCU\Control Panel\NotifyIconSettings` with the application's
+  executable path), but it sits in the hidden overflow flyout by default, so
+  its appearance has not been seen, and the recovery after an Explorer
+  restart has not been exercised.
 - **Sleep/wake.** The clock-jump detector is unit-tested with simulated
   clocks; the machine has not actually been suspended.
 - **The installer's interactive wizard.** The unattended path is tested; see below.

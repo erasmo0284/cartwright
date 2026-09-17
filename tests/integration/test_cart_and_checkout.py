@@ -3,6 +3,9 @@
 The tests in ``TestSubmitBarriers`` are the most important in the suite: they
 assert that the only code path capable of placing an order refuses to do so
 in test mode, without a passing guard, or when the total has moved.
+``TestTurboCheckout`` asserts the same barriers again for Buy Now, where the
+order button lives inside an iframe rather than on the page, and records what
+the checkout reader can and cannot see from outside that frame.
 """
 
 from __future__ import annotations
@@ -32,6 +35,11 @@ pytestmark = pytest.mark.integration
 ASIN = pages.DEFAULT_ASIN
 CART_URL = "https://www.amazon.com/gp/cart/view.html"
 CHECKOUT_URL = "https://www.amazon.com/gp/buy/spc/handlers/display.html"
+#: Buy Now keeps the shopper on the product page and draws the modal over it,
+#: so the Turbo host page is a ``/dp/`` URL rather than a checkout one.
+TURBO_URL = f"https://www.amazon.com/dp/{ASIN}"
+#: The modal's submit control, addressed the way the selectors address it.
+TURBO_BUTTON = "#turbo-checkout-pyo-button"
 
 
 def usd(amount: str) -> Money:
@@ -544,6 +552,337 @@ class TestSubmitBarriers:
         assert excinfo.value.code is ErrorCode.DUPLICATE_BLOCKED
         assert page.evaluate("window.__clicked === true") is False
         assert clicks == []
+
+
+def turbo_frame(page: object) -> object:
+    """The Buy Now modal's frame object, once its document has loaded.
+
+    ``page.frame_locator`` is enough to *query* the frame but hands back no
+    handle for running script inside it, and instrumenting the real button with
+    a click listener is the only way these tests can tell a refusal apart from
+    a click that merely failed. The wait is on the button rather than on the
+    panel so that a frame deliberately served without a panel can still be
+    inspected.
+    """
+    page.frame_locator("#turbo-checkout-iframe").locator(TURBO_BUTTON).first.wait_for(
+        state="attached", timeout=10_000
+    )
+    for frame in page.frames:
+        if "turbo-checkout-iframe" in frame.url:
+            return frame
+    raise AssertionError("the Buy Now modal's frame never attached to the page")
+
+
+def watch_turbo_button(page: object, frame: object, clicks: list[str]) -> None:
+    """Record any click on the modal's order button, in the page and in Python.
+
+    ``window.__clicked`` is set synchronously inside the listener, so reading
+    it after a refusal cannot race the exposed binding: had the button been
+    clicked at all, the flag would already be true.
+    """
+    page.expose_function("__noteClick", lambda: clicks.append("clicked"))
+    frame.evaluate(
+        """
+        document.querySelector('#turbo-checkout-pyo-button')
+          .addEventListener('click', (event) => {
+              event.preventDefault();
+              window.__clicked = true;
+              window.__noteClick();
+          });
+        """
+    )
+
+
+class TestTurboCheckout:
+    """The Buy Now modal, where the whole checkout lives inside an iframe.
+
+    This is the path a purchase takes whenever Amazon offers Buy Now, which is
+    the preferred cart-isolation strategy, so it is the path most real orders
+    would go through. The tests below drive the real
+    :class:`~app.automation.checkout_manager.CheckoutManager` against a real
+    frame: a fixture that only pretended to be one would prove nothing, because
+    the entire question is whether a locator built against the host document
+    can reach into a second document.
+    """
+
+    def _authorization(self, **overrides: object) -> SubmitAuthorization:
+        calls: list[str] = []
+        defaults: dict[str, object] = {
+            "purchase_job_id": 1,
+            "attempt_id": 1,
+            "approved_total": usd("117.94"),
+            "guard_passed": True,
+            "test_mode": False,
+            "record_submission": lambda: calls.append("recorded"),
+        }
+        defaults.update(overrides)
+        authorization = SubmitAuthorization(**defaults)  # type: ignore[arg-type]
+        authorization.__dict__["_calls"] = calls
+        return authorization
+
+    def _load_turbo(self, load, **page_options: object) -> object:
+        """Serve the host page and the modal's own document together.
+
+        ``frame=`` carries options through to the iframe's own builder; every
+        other keyword shapes the page that hosts it.
+        """
+        frame_options = page_options.pop("frame", {})
+        return load(
+            TURBO_URL,
+            pages.turbo_checkout_page(**page_options),  # type: ignore[arg-type]
+            also={
+                pages.TURBO_IFRAME_URL: pages.turbo_checkout_frame(
+                    **frame_options  # type: ignore[arg-type]
+                )
+            },
+        )
+
+    # ---- finding the button ---------------------------------------------
+
+    def test_the_order_button_is_found_inside_the_frame(
+        self, load, page, site
+    ) -> None:
+        """The button exists only in the modal, so only a frame search finds it.
+
+        If this regressed the manager would fall through to the classic chain,
+        find nothing on the host document, and report that Amazon's order
+        button had disappeared -- turning every Buy Now purchase into a
+        CHECKOUT_CHANGED failure.
+        """
+        reader = self._load_turbo(load)
+        control = CHECKOUT.find_place_order(reader)
+
+        assert control is not None, "the modal's order button was not found"
+        assert control.in_turbo_frame is True, (
+            "the button was found, but not reported as being in the Buy Now frame"
+        )
+        assert control.matches == 1
+        assert control.locator.is_visible()
+        assert page.locator(TURBO_BUTTON).count() == 0, (
+            "the button must be unreachable from the host document, or this "
+            "test would pass without the frame search working at all"
+        )
+        # The modal is a second document fetched over the wire; this proves it
+        # came from the fixture site rather than from an unrouted 404 body that
+        # happened to satisfy nothing.
+        site.assert_no_unexpected_requests()
+
+    def test_a_frame_whose_panel_never_renders_falls_back_to_the_main_page(
+        self, load
+    ) -> None:
+        """A modal that never finished rendering must not strand the purchase.
+
+        The frame here does contain an order button; only the panel container
+        is missing. Clicking that button would submit against a half-rendered
+        modal, which is why the panel -- not the button -- is the precondition,
+        and why the fall-back to the host document is the right answer.
+
+        This test pays the real wait: twenty seconds for each of the two panel
+        candidates, forty in total, every time ``find_place_order`` is called
+        against a stalled modal. That cost is deliberate here -- shortening it
+        would stop the test proving what the application actually does.
+        """
+        reader = self._load_turbo(
+            load,
+            host_summary=True,
+            host_place_order_button=True,
+            frame={"panel": False},
+        )
+        control = CHECKOUT.find_place_order(reader)
+
+        assert control is not None, "the host page's own order button was ignored"
+        assert control.in_turbo_frame is False, (
+            "a frame without a panel must not be treated as a usable modal"
+        )
+
+    def test_a_frame_without_a_panel_and_no_other_button_returns_none(
+        self, load
+    ) -> None:
+        """Nothing to click is reported as nothing to click, not as an error.
+
+        ``find_place_order`` is called speculatively -- by test mode, and once
+        per step while advancing the checkout -- so raising here would turn an
+        ordinary "not ready yet" into a failed purchase.
+        """
+        reader = self._load_turbo(load, frame={"panel": False})
+        assert CHECKOUT.find_place_order(reader) is None
+
+    # ---- reading the modal ------------------------------------------------
+
+    def test_the_checkout_inside_the_frame_is_read_through_the_frame(
+        self, load, product, rules
+    ) -> None:
+        """The whole order review lives in the modal, and is read from it.
+
+        ``read_checkout`` used to read through a :class:`PageReader` bound to
+        the host document while every money-bearing field sat in the frame, so
+        the snapshot came back with no total, no address, no payment and no
+        lines. That refused safely -- and refused *every* Buy Now purchase,
+        which is the preferred cart-isolation strategy. The reader now
+        resolves the frame once and scopes every read to it.
+        """
+        reader = self._load_turbo(load)
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert snapshot.place_order_control_found is True
+        assert snapshot.order_total == usd("117.94"), "the total is in the frame"
+        assert snapshot.item_subtotal == usd("109.97")
+        assert snapshot.tax == usd("7.97")
+        assert snapshot.shipping == usd("0.00")
+        assert snapshot.address_label is not None
+        assert "Raleigh" in snapshot.address_label
+        assert snapshot.payment_label == "Visa ending in 1234"
+        assert len(snapshot.lines) == 1
+        line = snapshot.lines[0]
+        assert line.asin == ASIN
+        assert line.quantity == 1
+
+        # And the guard can now do its job on a Buy Now order rather than
+        # refusing for want of anything to check.
+        report = GUARD.check_final(rules, product, snapshot)
+        assert report.passed, report.summary
+
+    def test_a_modal_that_renders_no_summary_is_still_refused(
+        self, load, product, rules
+    ) -> None:
+        """Reading the frame must not become "assume the frame is fine".
+
+        With the panel present but the summary absent, there is no total to
+        confirm, and an absent total has to fail rather than default.
+        """
+        reader = self._load_turbo(load, frame={"summary": False})
+        snapshot = CHECKOUT.read_checkout(reader)
+
+        assert snapshot.order_total is None
+        report = GUARD.check_final(rules, product, snapshot)
+        assert not report.passed, "a checkout with no total must never pass"
+
+    # ---- the submit barriers, inside the frame ---------------------------
+    # ---- the submit barriers, inside the frame ---------------------------
+
+    def test_test_mode_cannot_submit_through_the_frame(self, load, page) -> None:
+        """Test mode must not click the modal's button any more than the page's."""
+        reader = self._load_turbo(load, host_summary=True)
+        frame = turbo_frame(page)
+        clicks: list[str] = []
+        watch_turbo_button(page, frame, clicks)
+
+        authorization = self._authorization(test_mode=True)
+        with pytest.raises(AppError) as excinfo:
+            CHECKOUT.submit(reader, authorization)
+
+        assert excinfo.value.code is ErrorCode.INTERNAL_ERROR
+        assert "Test mode" in excinfo.value.detail
+        assert authorization.__dict__["_calls"] == []
+        assert frame.evaluate("window.__clicked === true") is False
+        assert clicks == []
+
+    def test_a_failed_guard_cannot_submit_through_the_frame(self, load, page) -> None:
+        """The guard gates the modal's button too, not only the classic page."""
+        reader = self._load_turbo(load, host_summary=True)
+        frame = turbo_frame(page)
+        clicks: list[str] = []
+        watch_turbo_button(page, frame, clicks)
+
+        authorization = self._authorization(guard_passed=False)
+        with pytest.raises(AppError):
+            CHECKOUT.submit(reader, authorization)
+
+        assert authorization.__dict__["_calls"] == []
+        assert frame.evaluate("window.__clicked === true") is False
+        assert clicks == []
+
+    def test_a_changed_total_cannot_submit_through_the_frame(
+        self, load, page
+    ) -> None:
+        """Consent was given for a specific amount, whichever button bears it.
+
+        The summary is where Amazon puts it -- inside the modal -- and the
+        total there differs from the one that was approved, so the frame's own
+        button must not be clicked.
+        """
+        reader = self._load_turbo(
+            load, frame={"order_total": "125.00", "tax": "15.03"}
+        )
+        frame = turbo_frame(page)
+        clicks: list[str] = []
+        watch_turbo_button(page, frame, clicks)
+
+        authorization = self._authorization(approved_total=usd("117.94"))
+        with pytest.raises(AppError) as excinfo:
+            CHECKOUT.submit(reader, authorization)
+
+        assert excinfo.value.code is ErrorCode.CHECKOUT_TOTAL_CHANGED
+        assert authorization.__dict__["_calls"] == []
+        assert frame.evaluate("window.__clicked === true") is False
+        assert clicks == []
+
+    def test_an_unreadable_total_cannot_submit_through_the_frame(
+        self, load, page
+    ) -> None:
+        """A modal whose summary never arrived is refused, not guessed at.
+
+        The button is there, the authorisation is complete and valid, and the
+        submission still stops because the total could not be confirmed
+        immediately before the click.
+        """
+        reader = self._load_turbo(load, frame={"summary": False})
+        frame = turbo_frame(page)
+        clicks: list[str] = []
+        watch_turbo_button(page, frame, clicks)
+
+        authorization = self._authorization()
+        with pytest.raises(AppError) as excinfo:
+            CHECKOUT.submit(reader, authorization)
+
+        assert excinfo.value.code is ErrorCode.CHECKOUT_TOTAL_CHANGED
+        assert "could not be re-checked" in excinfo.value.detail
+        assert authorization.__dict__["_calls"] == []
+        assert frame.evaluate("window.__clicked === true") is False
+        assert clicks == []
+
+    def test_submission_is_recorded_before_the_click_in_the_frame(
+        self, load, page
+    ) -> None:
+        """A crash mid-click must leave evidence, wherever the button lives.
+
+        As in the classic case, the host page carries the summary so that the
+        submission can get as far as the click at all. The listener awaits the
+        exposed binding before setting the flag the test waits on, because the
+        binding resolves asynchronously and asserting straight after ``submit``
+        would race it.
+        """
+        order: list[str] = []
+
+        def record() -> None:
+            order.append("recorded")
+
+        reader = self._load_turbo(load, host_summary=True)
+        frame = turbo_frame(page)
+        page.expose_function("__noteClick", lambda: order.append("clicked"))
+        frame.evaluate(
+            """
+            document.querySelector('#turbo-checkout-pyo-button')
+              .addEventListener('click', async (event) => {
+                  event.preventDefault();
+                  await window.__noteClick();
+                  window.__clickNoted = true;
+              });
+            """
+        )
+
+        authorization = SubmitAuthorization(
+            purchase_job_id=1,
+            attempt_id=1,
+            approved_total=usd("117.94"),
+            guard_passed=True,
+            test_mode=False,
+            record_submission=record,
+        )
+        CHECKOUT.submit(reader, authorization)
+        # The flag is set on the frame's own window, so the wait runs there.
+        frame.wait_for_function("window.__clickNoted === true", timeout=10_000)
+        assert order == ["recorded", "clicked"]
 
 
 class TestConfirmation:

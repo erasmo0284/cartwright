@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Final, Sequence
 
 from app.automation import selectors
 from app.automation.page_reader import PageReader, clean
@@ -50,6 +50,10 @@ CONFIRMATION_TIMEOUT_MS = 90_000
 TURBO_PANEL_TIMEOUT_MS = 20_000
 
 _QUANTITY_PATTERN = re.compile(r"qty\s*:?\s*(\d+)", re.IGNORECASE)
+
+#: "Nobody has looked yet", as distinct from "there is no modal". Only
+#: needed because ``None`` is a meaningful answer for a frame.
+_UNSET: Final = object()
 
 
 @dataclass(frozen=True)
@@ -116,10 +120,23 @@ class CheckoutManager:
     # ---- reading ---------------------------------------------------------
 
     def read_checkout(self, reader: PageReader) -> CheckoutSnapshot:
-        """Parse the order review into a :class:`CheckoutSnapshot`."""
-        summary = self._read_summary(reader)
-        lines = self._read_lines(reader)
-        control = self.find_place_order(reader)
+        """Parse the order review into a :class:`CheckoutSnapshot`.
+
+        Everything is read through one scope, resolved once: the Buy Now
+        modal is a **separate document** inside ``#turbo-checkout-iframe``,
+        and a reader bound to the host page finds none of it. Reading the
+        host page there produced a snapshot with no total, no address, no
+        payment and no lines -- which the guard correctly refused, so every
+        Buy Now purchase blocked at the final check. Buy Now is the preferred
+        cart-isolation strategy, so that made the preferred route unusable.
+        """
+        frame = self._turbo_frame(reader)
+        if frame is not None:
+            logger.info("Reading the checkout from inside the Buy Now modal")
+
+        summary = self._read_summary(reader, frame)
+        lines = self._read_lines(reader, frame)
+        control = self.find_place_order(reader, frame=frame)
 
         snapshot = CheckoutSnapshot(
             lines=tuple(lines),
@@ -128,10 +145,12 @@ class CheckoutManager:
             tax=summary.get("tax"),
             promotion=summary.get("promotion"),
             order_total=summary.get("total"),
-            address_label=self._read_address(reader),
-            payment_label=self._read_payment(reader),
+            address_label=self._read_address(reader, frame),
+            payment_label=self._read_payment(reader, frame),
             addons=self._detect_addons(lines),
-            is_subscription=reader.exists(selectors.SUBSCRIPTION_AT_CHECKOUT),
+            is_subscription=reader.exists(
+                selectors.SUBSCRIPTION_AT_CHECKOUT, scope=frame
+            ),
             place_order_control_found=control is not None,
             page_url=reader.url(),
         )
@@ -155,7 +174,9 @@ class CheckoutManager:
         )
         return snapshot
 
-    def _read_summary(self, reader: PageReader) -> dict[str, Money]:
+    def _read_summary(
+        self, reader: PageReader, scope: Any | None = None
+    ) -> dict[str, Money]:
         """Read the order summary by matching each row's label text.
 
         Positional table access breaks whenever Amazon adds a row, and the id
@@ -163,8 +184,9 @@ class CheckoutManager:
         markup, so the label is the anchor.
         """
         found: dict[str, list[Money]] = {}
+        root = scope if scope is not None else reader.page
         try:
-            rows = reader.page.locator(selectors.CHECKOUT_SUMMARY_ROWS)
+            rows = root.locator(selectors.CHECKOUT_SUMMARY_ROWS)
             total_rows = rows.count()
         except Exception:  # noqa: BLE001
             return {}
@@ -240,9 +262,12 @@ class CheckoutManager:
             return "items"
         return None
 
-    def _read_lines(self, reader: PageReader) -> list[CartLine]:
+    def _read_lines(
+        self, reader: PageReader, scope: Any | None = None
+    ) -> list[CartLine]:
+        root = scope if scope is not None else reader.page
         try:
-            rows = reader.page.locator(selectors.CHECKOUT_LINE_ITEMS)
+            rows = root.locator(selectors.CHECKOUT_LINE_ITEMS)
             total = rows.count()
         except Exception:  # noqa: BLE001
             return []
@@ -367,8 +392,10 @@ class CheckoutManager:
                 continue
         return None
 
-    def _read_address(self, reader: PageReader) -> str | None:
-        reading = reader.text(selectors.CHECKOUT_ADDRESS)
+    def _read_address(
+        self, reader: PageReader, scope: Any | None = None
+    ) -> str | None:
+        reading = reader.text(selectors.CHECKOUT_ADDRESS, scope=scope)
         if not reading.value:
             return None
         # The address block is multi-line; collapse it to a single readable
@@ -378,8 +405,10 @@ class CheckoutManager:
             return None
         return collapsed[:200]
 
-    def _read_payment(self, reader: PageReader) -> str | None:
-        reading = reader.text(selectors.CHECKOUT_PAYMENT)
+    def _read_payment(
+        self, reader: PageReader, scope: Any | None = None
+    ) -> str | None:
+        reading = reader.text(selectors.CHECKOUT_PAYMENT, scope=scope)
         if not reading.value:
             return None
         return clean(reading.value)[:200] if clean(reading.value) else None
@@ -401,13 +430,20 @@ class CheckoutManager:
 
     # ---- the order button ------------------------------------------------
 
-    def find_place_order(self, reader: PageReader) -> PlaceOrderControl | None:
+    def find_place_order(
+        self, reader: PageReader, *, frame: Any | None = _UNSET
+    ) -> PlaceOrderControl | None:
         """Locate Amazon's order button without clicking it.
 
         Used by test mode to prove the whole sequence works, and by a real
         submission immediately before the click.
+
+        ``frame`` may be an already-resolved Buy Now modal, or ``None`` to say
+        "there is no modal, do not look again". Resolving it costs a real wait
+        for the panel to render, and a submission asks for the button twice,
+        so the caller passes what it already knows.
         """
-        turbo = self._turbo_frame(reader)
+        turbo = self._turbo_frame(reader) if frame is _UNSET else frame
         if turbo is not None:
             locator, matches = self._find_in(turbo, selectors.TURBO_PLACE_ORDER)
             if locator is not None:
@@ -442,12 +478,16 @@ class CheckoutManager:
         except Exception:  # noqa: BLE001
             return None
 
-        for candidate in selectors.TURBO_CHECKOUT_PANEL:
-            if not candidate.css:
-                continue
+        # The wait is a budget for the whole chain, not for each candidate.
+        # Spending the full timeout per candidate meant a modal that never
+        # rendered cost 40 seconds a look -- and a submission looks twice,
+        # while advancing the checkout looks once per step.
+        candidates = [c for c in selectors.TURBO_CHECKOUT_PANEL if c.css]
+        budget = max(1_000, TURBO_PANEL_TIMEOUT_MS // max(1, len(candidates)))
+        for candidate in candidates:
             try:
                 panel = frame.locator(candidate.css).first
-                panel.wait_for(state="attached", timeout=TURBO_PANEL_TIMEOUT_MS)
+                panel.wait_for(state="attached", timeout=budget)
                 logger.info("Buy Now checkout panel is ready")
                 return frame
             except Exception:  # noqa: BLE001
@@ -477,6 +517,8 @@ class CheckoutManager:
         depends on the account's saved address and payment details.
         """
         for step in range(max_steps):
+            # The frame is re-resolved each step on purpose: clicking
+            # "Continue" can be what opens the modal in the first place.
             if self.find_place_order(reader) is not None:
                 return
             locator, _ = reader.find(selectors.CHECKOUT_CONTINUE, visible_only=True)
@@ -536,7 +578,7 @@ class CheckoutManager:
                 },
             )
 
-        control = self.find_place_order(reader)
+        control = self.find_place_order(reader, frame=self._turbo_frame(reader))
         if control is None:
             raise AppError(
                 ErrorCode.CHECKOUT_CHANGED,

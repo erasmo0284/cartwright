@@ -146,6 +146,32 @@ so the test cannot be satisfied by logging nothing.
 | Clean shutdown after the review fixes | Packaged app closed from its window: orderly shutdown, exit 0, **0** `chrome.exe` left |
 | Inline error hint, both themes | Captured and reviewed: red and semibold, not the muted grey of ordinary guidance |
 
+## The Windows surface, checked on this machine
+
+Three of the "never run on real hardware" items were driven for real. What
+they establish, and what they do not:
+
+| Check | Result |
+|---|---|
+| AUMID registration | `register_aumid()` returns True and writes `HKCU\SOFTWARE\Classes\AppUserModelId\AmazonPurchaseBot.Desktop`; the installed Start Menu shortcut carries the same id (read back with `System.AppUserModel.ID`) |
+| Sending a toast | The real `Notifier` was run outside the test suite, against real WinRT. `self_test()` and a real `purchase_completed` toast were both accepted, and both are recorded in `notification_events` as delivered by toast |
+| A toast **banner on screen** | **Not seen.** Eight screen captures at 1.2 s intervals show no banner, and `ToastNotificationManager.history` holds nothing for the app |
+| Control experiment | The same library sent a toast under PowerShell's own well-known AppUserModelID -- an identity Windows already trusts. It behaved identically: accepted, no banner, nothing in history. **This machine is not displaying toast banners at all**, so the app's result says nothing about the app |
+| Start with Windows | `startup.enable()` writes the `Run` value with the right command; `is_enabled()` reads it back; a `StartupApproved` blob of `03 00 …` is correctly read as "Turned off in Windows Settings" and `02 00 …` as "On"; `disable()` removes both. Done against the **real** `HKCU` keys, then cleaned up |
+| Tray icon | Launching the app creates a real notification-area entry: `HKCU\Control Panel\NotifyIconSettings` gains a row whose `ExecutablePath` is the application's executable. It is not promoted out of the overflow flyout, which is Windows' default for a new application, so its **appearance** is still unconfirmed |
+| Dark title bar and window chrome | **Confirmed.** The installed copy was captured on real hardware in dark mode: the caption bar is dark with light text and the application icon, matching the window body (`docs/screens/real-installed-titlebar-dark.png`, `real-installed-dashboard-dark.png`) |
+
+What this does *not* prove: that a user will see a toast on a machine with
+notifications enabled, that clicking a toast button reaches
+`Notifier.action_invoked`, or that the tray icon looks right. The first two
+need a machine that shows banners; the notifier's own wording already tells
+the user to check Windows Settings when nothing appears, which is exactly the
+situation this machine is in.
+
+A real logon with "Start with Windows" enabled, and the tray icon's recovery
+after an Explorer restart, were deliberately not performed: both disturb the
+desktop session of whoever is at the machine.
+
 ## Bugs found by testing, and fixed
 
 1. **Migration crashed the first real run.**

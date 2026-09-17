@@ -108,6 +108,19 @@ different seller can mean a different item, price or returns policy.
 **New only** by default. "Used — Like New" is used, not new, and is refused.
 If Amazon does not state the condition at all, the purchase stops.
 
+### Versions (colour, size, style)
+
+Amazon gives every version of a product its own item code, and the app buys
+the item code you gave it. It will never switch to a different colour or size
+to get a better price.
+
+If the app cannot read which version the page was showing, it says so under
+the rules: *"This item comes in several versions and the app could not read
+which one is shown."* That is not an error. It means the purchase is pinned
+to the item code alone, which is still the exact item you were looking at --
+the app is telling you what it is relying on rather than letting you assume
+it wrote down "Black".
+
 ### Advanced
 
 - Only order to the delivery address recorded now

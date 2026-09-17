@@ -138,6 +138,55 @@ class TestProductPage:
         reader = load(PRODUCT_URL, pages.product_page(dimensions={}))
         snapshot = PARSER.parse(reader)
         assert snapshot.variation.is_empty
+        assert snapshot.variation_picker_present is False
+        assert snapshot.variation_unreadable is False
+
+    def test_a_picker_whose_labels_are_unfamiliar_is_reported_as_unreadable(
+        self, load
+    ) -> None:
+        """Two states that look alike and are not: none, and unreadable.
+
+        Labels outside ``KNOWN_VARIATION_LABELS`` are dropped, because Amazon
+        puts non-dimension labels in the same markup and treating those as
+        dimensions would block ordinary purchases. The cost is that a renamed
+        dimension leaves the rule with no variation expectation at all, and
+        the guard can only compare what was stored. Recording that the picker
+        was there is what lets the user be told, instead of assuming the
+        colour they were looking at was written down.
+        """
+        reader = load(
+            PRODUCT_URL,
+            pages.product_page(dimensions={"Finish Tone": "Matte Charcoal"}),
+        )
+        snapshot = PARSER.parse(reader)
+
+        assert snapshot.variation.is_empty, "the label is not a known dimension"
+        assert snapshot.variation_picker_present is True
+        assert snapshot.variation_unreadable is True
+
+    def test_an_unfamiliar_label_beside_a_familiar_one_is_not_unreadable(
+        self, load
+    ) -> None:
+        """Something was read, so the expectation is not empty."""
+        reader = load(
+            PRODUCT_URL,
+            pages.product_page(dimensions={"Color": "Black", "Finish Tone": "Matte"}),
+        )
+        snapshot = PARSER.parse(reader)
+        assert snapshot.variation.dimensions == {"Color": "Black"}
+        assert snapshot.variation_picker_present is True
+        assert snapshot.variation_unreadable is False
+
+    def test_the_inline_picker_is_detected_too(self, load) -> None:
+        reader = load(
+            PRODUCT_URL,
+            pages.product_page(
+                dimensions={"Finish Tone": "Matte"}, inline_twister=True
+            ),
+        )
+        snapshot = PARSER.parse(reader)
+        assert snapshot.variation_picker_present is True
+        assert snapshot.variation_unreadable is True
 
     def test_variation_fingerprint_changes_with_the_selection(self, load) -> None:
         black = PARSER.parse(

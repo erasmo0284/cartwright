@@ -105,6 +105,7 @@ class ProductParser:
             ships_from=ships_from,
             condition=self._read_condition(reader),
             variation=self._read_variation(reader),
+            variation_picker_present=self._has_variation_picker(reader),
             max_quantity=self._read_max_quantity(reader),
             prime_eligible=self._read_prime(reader),
             delivery_estimate=self._read_text(
@@ -401,6 +402,38 @@ class ProductParser:
         if not dimensions:
             dimensions = self._read_inline_twister(reader)
         return VariationSnapshot(dimensions=dimensions)
+
+    def _has_variation_picker(self, reader: PageReader) -> bool:
+        """Whether the page offers variations at all.
+
+        Kept separate from reading them, because "no variations" and "several
+        variations, none of which could be read" are different answers and
+        only the second one should worry anybody.
+
+        The container alone is not evidence. A live amazon.com page for a
+        product with no variations still contains an **empty**
+        ``#twister_feature_div`` -- 82 bytes of whitespace, no children --
+        so treating the container as a picker reported every ordinary product
+        as having unreadable versions. Rows first; the container only counts
+        when it actually has something in it.
+        """
+        for selector in (
+            selectors.TWISTER_LEGACY_ROWS,
+            selectors.TWISTER_INLINE_ROWS,
+        ):
+            try:
+                if reader.page.locator(selector).count():
+                    return True
+            except Exception:  # noqa: BLE001 - a picker we cannot look for
+                continue
+
+        container, _ = reader.find(selectors.TWISTER_CONTAINER)
+        if container is None:
+            return False
+        try:
+            return bool(clean(container.text_content(timeout=2_000)))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _read_legacy_twister(self, reader: PageReader) -> dict[str, str]:
         found: dict[str, str] = {}
