@@ -97,6 +97,41 @@ class TestProductPage:
         assert snapshot.seller == "XYZ Marketplace LLC"
         assert snapshot.seller_is_amazon is False
 
+    def test_a_seller_link_that_is_only_a_label_is_not_the_seller(
+        self, load
+    ) -> None:
+        """"Learn more about the seller" is a control, not a name.
+
+        A live signed-in page served exactly this: the id the parser trusted
+        first held a link label, and the seller's name sat in a different
+        element. The rehearsal reported the seller as "Learn more about the
+        seller" -- which blocked, because the rule was Amazon-only, but for
+        the wrong reason, and under a manufacturer or approved-list rule that
+        string would have been stored as the expectation.
+        """
+        reader = load(
+            PRODUCT_URL,
+            pages.product_page(
+                seller="Aproca Direct",
+                ships_from="Amazon",
+                seller_link_is_a_label=True,
+            ),
+        )
+        snapshot = PARSER.parse(reader)
+
+        assert snapshot.seller == "Aproca Direct"
+        assert snapshot.ships_from == "Amazon"
+        assert snapshot.seller_is_amazon is False
+
+    def test_the_older_layout_still_reads_the_seller_from_the_link(
+        self, load
+    ) -> None:
+        """Signed out, the same id holds the name. Both must work."""
+        reader = load(
+            PRODUCT_URL, pages.product_page(seller="XYZ Marketplace LLC")
+        )
+        assert PARSER.parse(reader).seller == "XYZ Marketplace LLC"
+
     def test_missing_seller_is_none_not_a_guess(self, load) -> None:
         reader = load(
             PRODUCT_URL, pages.product_page(seller=None, ships_from=None)

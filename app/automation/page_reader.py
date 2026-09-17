@@ -24,8 +24,9 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from app.automation.selectors import Candidate, SelectorChain
 
@@ -113,14 +114,19 @@ class PageReader:
             )
         return None
 
-    def find(
+    def _matches(
         self,
         chain: SelectorChain,
         *,
         scope: Any | None = None,
         visible_only: bool = False,
-    ) -> tuple[Any | None, Resolution | None]:
-        """First matching candidate's locator, without waiting."""
+    ) -> Iterator[tuple[Any, Resolution]]:
+        """Every candidate that matches, in order, with its resolution.
+
+        Callers that only want the first use :meth:`find`. Callers that have
+        to *judge* what they got -- a candidate can match an element and
+        still yield the wrong thing -- walk the rest.
+        """
         for index, candidate in enumerate(chain):
             locator = self._build(candidate, scope)
             if locator is None:
@@ -133,10 +139,22 @@ class PageReader:
                     continue
             except Exception:  # noqa: BLE001 - detached nodes and races are normal
                 continue
-            resolution = Resolution(chain.name, candidate, index)
+            yield first, Resolution(chain.name, candidate, index)
+
+    def find(
+        self,
+        chain: SelectorChain,
+        *,
+        scope: Any | None = None,
+        visible_only: bool = False,
+    ) -> tuple[Any | None, Resolution | None]:
+        """First matching candidate's locator, without waiting."""
+        for locator, resolution in self._matches(
+            chain, scope=scope, visible_only=visible_only
+        ):
             if resolution.used_fallback:
                 self._note_fallback(resolution)
-            return first, resolution
+            return locator, resolution
         return None, None
 
     def exists(
@@ -194,6 +212,7 @@ class PageReader:
         scope: Any | None = None,
         visible_only: bool = False,
         visible_text: bool = False,
+        accept: Callable[[str], bool] | None = None,
     ) -> Reading:
         """Text content of the first match, whitespace-collapsed.
 
@@ -202,12 +221,38 @@ class PageReader:
         for anything Amazon builds from a template: the payment panel's
         ``textContent`` is 462 characters of inline JSON wrapped around the
         21 characters that say which card is being used.
+
+        ``accept`` judges the value. A candidate can match an element and
+        still hand back something useless -- on a signed-in product page
+        ``#sellerProfileTriggerId`` is a link reading "Learn more about the
+        seller", not the seller's name -- and a chain exists precisely so
+        that the next candidate can be tried. A rejected value is treated as
+        a miss, not as an answer.
         """
-        locator, resolution = self.find(
+        last: Resolution | None = None
+        for locator, resolution in self._matches(
             chain, scope=scope, visible_only=visible_only
-        )
-        if locator is None:
-            return Reading(None, None)
+        ):
+            last = resolution
+            cleaned = self._read_one(locator, visible_text=visible_text)
+            if cleaned is None:
+                continue
+            if accept is not None and not accept(cleaned):
+                logger.info(
+                    "Candidate matched but its value was rejected",
+                    extra={
+                        "chain": resolution.chain_name,
+                        "candidate": resolution.candidate.describe(),
+                    },
+                )
+                continue
+            if resolution.used_fallback:
+                self._note_fallback(resolution)
+            return Reading(cleaned, resolution)
+        return Reading(None, last)
+
+    @staticmethod
+    def _read_one(locator: Any, *, visible_text: bool) -> str | None:
         readers = ("inner_text", "text_content") if visible_text else ("text_content",)
         for reader_name in readers:
             try:
@@ -216,8 +261,8 @@ class PageReader:
                 continue
             cleaned = clean(raw)
             if cleaned:
-                return Reading(cleaned, resolution)
-        return Reading(None, resolution)
+                return cleaned
+        return None
 
     def attribute(
         self, chain: SelectorChain, name: str, *, scope: Any | None = None

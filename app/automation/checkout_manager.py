@@ -103,6 +103,17 @@ class SubmitAuthorization:
             )
 
 
+def _is_a_value(text: str, labels: tuple[str, ...]) -> bool:
+    """Whether ``text`` is an answer rather than the heading above one.
+
+    Amazon puts "Payment method" and "Shipping address" in the same
+    containers as the card and the address, so a chain that walks past an
+    empty element lands on the heading and reports it as the value.
+    """
+    normalised = normalise_label(text) or ""
+    return bool(normalised) and normalised not in labels
+
+
 @dataclass(frozen=True)
 class PlaceOrderControl:
     """The located order button."""
@@ -417,7 +428,10 @@ class CheckoutManager:
         self, reader: PageReader, scope: Any | None = None
     ) -> str | None:
         reading = reader.text(
-            selectors.CHECKOUT_ADDRESS, scope=scope, visible_text=True
+            selectors.CHECKOUT_ADDRESS,
+            scope=scope,
+            visible_text=True,
+            accept=lambda value: _is_a_value(value, selectors.NON_ADDRESS_LABELS),
         )
         if not reading.value:
             return None
@@ -432,7 +446,10 @@ class CheckoutManager:
         self, reader: PageReader, scope: Any | None = None
     ) -> str | None:
         reading = reader.text(
-            selectors.CHECKOUT_PAYMENT, scope=scope, visible_text=True
+            selectors.CHECKOUT_PAYMENT,
+            scope=scope,
+            visible_text=True,
+            accept=lambda value: _is_a_value(value, selectors.NON_PAYMENT_LABELS),
         )
         if not reading.value:
             return None

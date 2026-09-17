@@ -333,9 +333,22 @@ class TestReadCheckout:
         assert sum(line.quantity for line in matching) == 2
 
     def test_missing_address_is_none(self, load) -> None:
+        """An empty address element must not become the heading above it.
+
+        The reader walks past a candidate that yields nothing, which is what
+        lets it find a value the first candidate missed -- and which also
+        walks it straight into "Shipping address" unless headings are
+        rejected as values.
+        """
         reader = load(CHECKOUT_URL, pages.checkout_page(address=None))
         snapshot = CHECKOUT.read_checkout(reader)
         assert not snapshot.address_label
+
+    def test_missing_payment_is_none(self, load) -> None:
+        """The same trap: "Payment method" is a heading, not a card."""
+        reader = load(CHECKOUT_URL, pages.checkout_page(payment=None))
+        snapshot = CHECKOUT.read_checkout(reader)
+        assert not snapshot.payment_label
 
     def test_missing_payment_is_none(self, load) -> None:
         reader = load(CHECKOUT_URL, pages.checkout_page(payment=None))

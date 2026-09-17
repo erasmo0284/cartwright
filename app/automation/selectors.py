@@ -271,14 +271,34 @@ OUT_OF_STOCK_MARKERS: Final = chain(
 #: tabular buybox rows are the newer layout; their attribute values are
 #: localised, which is why the row is matched by attribute name and the label
 #: text is compared separately.
+#: Who is selling. ``#sellerProfileTriggerId`` is **not** first any more:
+#: signed in, on a live page on 2026-09-16, that element is a link whose
+#: entire text is "Learn more about the seller". Signed out, the same id
+#: held the seller's name -- which is why the value is judged as well as the
+#: element chosen (see :data:`NON_SELLER_LABELS`).
 PRODUCT_SELLER: Final = chain(
     "seller",
-    css("#sellerProfileTriggerId"),
+    css("#merchantInfoFeature_feature_div .offer-display-feature-text-message"),
     css("#tabular-buybox [tabular-attribute-name='Sold by'] .tabular-buybox-text"),
     css("#merchant-info a[href*='seller=']"),
-    css("#merchantInfoFeature_feature_div .offer-display-feature-text-message"),
+    css("#sellerProfileTriggerId"),
     css("#bylineInfo_feature_div .offer-display-feature-text-message"),
     css("#merchant-info", loose=True),
+)
+
+#: Text that is a control's label rather than a seller's name. A seller read
+#: from one of these is not a seller: under "Amazon only" it blocks, which is
+#: safe but tells the user nothing, and under any other policy it would be
+#: stored as the expectation a future purchase is compared against.
+NON_SELLER_LABELS: Final[tuple[str, ...]] = (
+    "learn more about the seller",
+    "learn more",
+    "see more",
+    "sold by",
+    "ships from",
+    "visit the store",
+    "seller information",
+    "other sellers on amazon",
 )
 
 PRODUCT_SHIPS_FROM: Final = chain(
@@ -686,6 +706,30 @@ PROMOTION_LABELS: Final[tuple[str, ...]] = (
 #: table the older checkout used. A container that holds every row must never
 #: be matched: it classifies as "items" and then takes the largest price in
 #: it, which is the grand total.
+#: Headings that sit in the same containers as the values below them. A
+#: candidate that yields one of these has matched the section, not the
+#: answer -- and since an empty element no longer ends the search, the next
+#: candidate up the page is exactly where a heading gets picked up.
+NON_ADDRESS_LABELS: Final[tuple[str, ...]] = (
+    "shipping address",
+    "delivery address",
+    "deliver to",
+    "delivering to",
+    "ship to",
+    "address",
+    "choose a delivery address",
+)
+
+NON_PAYMENT_LABELS: Final[tuple[str, ...]] = (
+    "payment method",
+    "payment methods",
+    "payment",
+    "paying with",
+    "pay with",
+    "payment information",
+    "choose a payment method",
+)
+
 CHECKOUT_SUMMARY_ROWS: Final = (
     "#subtotals-marketplace-table tr, "
     "#subtotals tr, "

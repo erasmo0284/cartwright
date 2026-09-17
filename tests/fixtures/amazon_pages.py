@@ -107,9 +107,36 @@ def _price_block(
     """
 
 
-def _buybox_seller(seller: str | None, ships_from: str | None) -> str:
+def _buybox_seller(
+    seller: str | None,
+    ships_from: str | None,
+    *,
+    seller_link_is_a_label: bool = False,
+) -> str:
+    """The "Sold by" / "Ships from" block.
+
+    ``seller_link_is_a_label`` reproduces what a signed-in page served on
+    2026-09-16: ``#sellerProfileTriggerId`` exists, but its text is "Learn
+    more about the seller" and the name lives in the offer-display feature
+    instead. Signed out, the same id held the name -- so both shapes are
+    real and the parser has to cope with either.
+    """
     if seller is None and ships_from is None:
         return ""
+    if seller and seller_link_is_a_label:
+        return f"""
+        <div id="tabular-buybox">
+          <div id="merchantInfoFeature_feature_div">
+            <span id="merchant-trust-info-card"
+                  class="a-size-small offer-display-feature-text-message">{seller}</span>
+          </div>
+          {f'''<div id="fulfillerInfoFeature_feature_div">
+            <span class="a-size-small offer-display-feature-text-message">{ships_from}</span>
+          </div>''' if ships_from else ""}
+          <a id="sellerProfileTriggerId" href="/gp/help/seller/at-a-glance.html">
+            Learn more about the seller</a>
+        </div>
+        """
     rows = []
     if ships_from:
         rows.append(
@@ -225,6 +252,7 @@ def product_page(
     buy_now: bool = True,
     add_to_cart: bool = True,
     signed_in: bool = True,
+    seller_link_is_a_label: bool = False,
     delivery: str | None = "FREE delivery Thursday, September 24",
 ) -> str:
     """A product detail page."""
@@ -287,7 +315,7 @@ def product_page(
           {sns_block}
           {'<input id="add-to-cart-button" name="submit.add-to-cart" type="submit" value="Add to Cart">' if add_to_cart else ''}
           {'<input id="buy-now-button" name="submit.buy-now" type="submit" value="Buy Now">' if buy_now else ''}
-          {_buybox_seller(seller, ships_from)}
+          {_buybox_seller(seller, ships_from, seller_link_is_a_label=seller_link_is_a_label)}
         </div>
       </div>
       <input type="hidden" id="ASIN" name="ASIN" value="{asin}">

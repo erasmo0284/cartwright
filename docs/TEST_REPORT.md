@@ -6,8 +6,8 @@ PySide6-Essentials 6.11.2, Playwright 1.63.0 (Chromium build 1243).
 ## Summary
 
 ```
-1132 tests collected
-1064 passed, 68 skipped in 172s
+1134 tests collected
+1066 passed, 68 skipped in 169s
 ```
 
 The 68 skips are all from one parametrised guard test
@@ -211,6 +211,39 @@ Two findings that were not defects:
 The live layout is now covered by `TestCurrentCheckout` in
 `tests/integration/test_cart_and_checkout.py`, against a fixture copied from
 the real page, so none of the six can come back unnoticed.
+
+### Two more products, and a seventh defect
+
+One product proves one layout, so the rehearsal was repeated.
+
+**A consumable sold by Amazon** (36 alkaline batteries, $13.70) passed every
+check first time: a different variation dimension ("Size: 36 Count"),
+Subscribe & Save present on the page and correctly reported as *not*
+pre-selected, $0.99 of tax inside the suggested allowance, order button
+located and not clicked.
+
+**An item sold by a third party** (a case, $16.99, fulfilled by Amazon) was
+correctly **blocked** by the seller rule -- but reported the seller as
+**"Learn more about the seller"**. Signed in, `#sellerProfileTriggerId` is a
+link with that label and the name sits in the offer-display feature instead;
+signed out, the same id holds the name, which is why no earlier check caught
+it. Under "Amazon only" this blocked either way, but under a manufacturer or
+approved-seller rule that string would have been *stored as the expectation*
+every future purchase was compared against.
+
+Fixed in two ways, because reordering alone would not survive the next A/B
+test: the chain now prefers the element that actually holds the name, and
+`PageReader.text` gained an `accept` predicate so a candidate that matches an
+element but yields a control's label is treated as a miss and the chain
+continues. Re-run live, the same purchase now blocks with "expected Amazon
+only, found Aproca Direct".
+
+That change had a consequence worth recording: walking past a candidate that
+yields nothing means the reader can walk into the *heading* above the value,
+and a fixture caught it immediately -- an empty address element started
+reading as "Shipping address". Headings are now rejected as values for both
+the address and the payment method, with a test for each.
+
 
 ## The Windows surface, checked on this machine
 

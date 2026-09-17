@@ -263,8 +263,24 @@ class ProductParser:
 
     # ---- offer details ---------------------------------------------------
 
+    @staticmethod
+    def _looks_like_a_seller_name(value: str) -> bool:
+        """Whether a matched element's text could be a seller at all.
+
+        Used to reject a candidate rather than to sanitise its value: a
+        control's label ("Learn more about the seller") means this element is
+        the wrong one, and the chain has others to try.
+        """
+        normalised = normalise_label(value) or ""
+        if not normalised or len(normalised) > 80:
+            return False
+        return normalised not in selectors.NON_SELLER_LABELS
+
     def _read_seller(self, reader: PageReader) -> str | None:
-        raw = self._read_text(reader, selectors.PRODUCT_SELLER)
+        reading = reader.text(
+            selectors.PRODUCT_SELLER, accept=self._looks_like_a_seller_name
+        )
+        raw = reading.value
         if not raw:
             return None
         # The loose "#merchant-info" candidate returns a whole sentence such
